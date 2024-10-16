@@ -1,0 +1,49 @@
+From 23db6896830d6b37fc3bcc3ad5a7f725eb97d2e1 Mon Sep 17 00:00:00 2001
+From: Hajime Tazaki <thehajime@gmail.com>
+Date: Mon, 25 Nov 2024 14:08:36 +0900
+Subject: [PATCH] hush: fix G.argv0_for_re_execing to avoid endless loop
+
+When the busybox is used as /sbin/init and the inittab file contains
+below:
+
+::respawn:-/bin/sh
+
+/sbin/init spawns hush for the first time with the argv[0] contains '-',
+and hush treats it as login shell.  Then it reads /etc/profile and if
+the file contains the command execution like below, it invokes hush as
+login shell because the argv[0] argument is still '-/bin/sh' and reads
+/etc/profile again.  This will last until some failure (e.g., memory
+failure) happens.
+
+  [ "$(id -u)" -eq 0 ] && PS1="${PS1}# " || PS1="${PS1}\$ "
+
+This commit fixes this issues by adding an offset (+1) to the
+G.argv0_for_re_execing variable.
+
+This issue happens on our out-of-tree UML (use mode linux) with nommu
+configuration.
+
+Link: https://lore.kernel.org/all/cover.1731290567.git.thehajime@gmail.com/
+Signed-off-by: Hajime Tazaki <thehajime@gmail.com>
+Signed-off-by: Denys Vlasenko <vda.linux@googlemail.com>
+---
+ shell/hush.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/shell/hush.c b/shell/hush.c
+index 04dda0734..4a97293cc 100644
+--- a/shell/hush.c
++++ b/shell/hush.c
+@@ -10361,6 +10361,9 @@ int hush_main(int argc, char **argv)
+ 		_exit(0);
+ 	}
+ 	G.argv0_for_re_execing = argv[0];
++	if (G.argv0_for_re_execing[0] == '-')
++		/* reexeced hush should never be a login shell */
++		G.argv0_for_re_execing++;
+ #endif
+ #if ENABLE_HUSH_TRAP
+ # if ENABLE_HUSH_FUNCTIONS
+-- 
+2.43.0
+
