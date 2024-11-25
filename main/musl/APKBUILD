@@ -14,6 +14,7 @@ subpackages="
 	$pkgname-libintl:libintl:noarch
 	$pkgname-dev
 	"
+[ "$CARCH" = "x86_64" ] && subpackages="$subpackages $pkgname-nommu"
 case "$BOOTSTRAP" in
 nocc)	pkgname="musl-dev"; subpackages="";;
 nolibc) ;;
@@ -172,6 +173,25 @@ dev() {
 
 	# for backwards compatibility
 	provides="libc-dev=$pkgver-r$pkgrel"
+}
+
+nommu() {
+	pkgdesc="musl nommu/x86 build"
+	provides="musl=$pkgver-r$pkgrel"
+
+	export CFLAGS=${CFLAGS}" -DDL_NOMMU_SUPPORT=1"
+
+	cd "$builddir"
+	make clean
+	build
+	make DESTDIR="$subpkgdir" install
+
+	# make LDSO the be the real file, and libc the symlink
+	local rule="$(printf "%s\n\t%s\n" 'print-ldso:' '@echo $$(basename $(LDSO_PATHNAME))')"
+	local LDSO=$(make -f Makefile --eval "$rule" print-ldso)
+	mv -f "$subpkgdir"/usr/lib/libc.so "$subpkgdir"/lib/"$LDSO"
+	ln -sf "$LDSO" "$subpkgdir"/lib/libc.musl-$CARCH.so.1
+	rm -rf "${subpkgdir:?}"/usr
 }
 
 sha512sums="
