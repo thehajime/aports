@@ -1,0 +1,825 @@
+diff --git a/arch/x86_64/atomic_arch.h b/arch/x86_64/atomic_arch.h
+index da4e2037..bb0fbec9 100644
+--- a/arch/x86_64/atomic_arch.h
++++ b/arch/x86_64/atomic_arch.h
+@@ -1,4 +1,28 @@
++#ifdef SWMMU_ALL_ACCESS
++#include <swmmu_runtime.h>
++#include <stdlib.h>
++#endif
++
+ #define a_cas a_cas
++#ifdef SWMMU_ALL_ACCESS
++
++static inline int
++a_cas(volatile int *p, int t, int s)
++{
++	uint32_t observed;
++	int ret;
++
++	ret = nommu_swmmu_cmpxchg_u32(
++		(void *)p,
++		(uint32_t)t,
++		(uint32_t)s,
++		&observed);
++	if (ret)
++		abort();
++
++	return (int)observed;
++}
++#else
+ static inline int a_cas(volatile int *p, int t, int s)
+ {
+ 	__asm__ __volatile__ (
+@@ -6,6 +30,7 @@ static inline int a_cas(volatile int *p, int t, int s)
+ 		: "=a"(t), "=m"(*p) : "a"(t), "r"(s) : "memory" );
+ 	return t;
+ }
++#endif
+ 
+ #define a_cas_p a_cas_p
+ static inline void *a_cas_p(volatile void *p, void *t, void *s)
+@@ -43,6 +68,36 @@ static inline void a_and(volatile int *p, int v)
+ }
+ 
+ #define a_or a_or
++#ifdef SWMMU_ALL_ACCESS
++
++static inline void
++a_or(volatile int *p, int v)
++{
++	uint32_t old;
++	uint32_t observed;
++	int ret;
++
++	old = (uint32_t)nommu_swmmu_load_dynamic(
++		(const void *)p, sizeof(*p));
++
++	for (;;) {
++		ret = nommu_swmmu_cmpxchg_u32(
++			(void *)p,
++			old,
++			old | (uint32_t)v,
++			&observed);
++		if (ret)
++			abort();
++
++		if (observed == old)
++			return;
++
++		old = observed;
++	}
++}
++
++#else
++
+ static inline void a_or(volatile int *p, int v)
+ {
+ 	__asm__ __volatile__(
+@@ -50,6 +105,8 @@ static inline void a_or(volatile int *p, int v)
+ 		: "=m"(*p) : "r"(v) : "memory" );
+ }
+ 
++#endif
++
+ #define a_and_64 a_and_64
+ static inline void a_and_64(volatile uint64_t *p, uint64_t v)
+ {
+diff --git a/src/include/swmmu_plugin_runtime.h b/src/include/swmmu_plugin_runtime.h
+new file mode 100644
+index 00000000..81dfa782
+--- /dev/null
++++ b/src/include/swmmu_plugin_runtime.h
+@@ -0,0 +1,57 @@
++#ifndef SWMMU_PLUGIN_RUNTIME_H
++#define SWMMU_PLUGIN_RUNTIME_H
++
++#ifndef __ASSEMBLER__
++
++#include "swmmu_runtime.h"
++
++static uint64_t (* const __attribute__((used))
++swmmu_keep_load)(const void *, size_t) =
++	nommu_swmmu_load_u64;
++
++static long (* const __attribute__((used))
++swmmu_keep_store)(void *, size_t, uint64_t) =
++	nommu_swmmu_store_u64;
++
++static uint64_t (* const __attribute__((used))
++swmmu_keep_load_dynamic)(const void *, size_t) =
++	nommu_swmmu_load_dynamic;
++
++static long (* const __attribute__((used))
++swmmu_keep_store_dynamic)(void *, size_t, uint64_t) =
++	nommu_swmmu_store_dynamic;
++
++static void *(* const __attribute__((used))
++swmmu_keep_memcpy)(void *, const void *, size_t) =
++	nommu_swmmu_memcpy;
++
++static void *(* const __attribute__((used))
++swmmu_keep_memmove)(void *, const void *, size_t) =
++	nommu_swmmu_memmove;
++
++static void *(* const __attribute__((used))
++swmmu_keep_memset)(void *, int, size_t) =
++	nommu_swmmu_memset;
++
++static void *(* const __attribute__((used))
++keep_swmmu_memcpy_dynamic)(void *, const void *, size_t) =
++	nommu_swmmu_memcpy_dynamic;
++static void *(* const __attribute__((used))
++keep_swmmu_memset_dynamic)(void *, int, size_t) =
++	nommu_swmmu_memset_dynamic;
++static void *(* const __attribute__((used))
++keep_swmmu_memmove_dynamic)(void *, const void *, size_t) =
++	nommu_swmmu_memmove_dynamic;
++
++static uint64_t (* const __attribute__((used))
++keep_swmmu_bitfield_load_dynamic)(
++	const void *, size_t, unsigned int, unsigned int) =
++	nommu_swmmu_bitfield_load_dynamic;
++
++static long (* const __attribute__((used))
++keep_swmmu_bitfield_store_dynamic)(
++	void *, size_t, unsigned int, unsigned int, uint64_t) =
++	nommu_swmmu_bitfield_store_dynamic;
++
++#endif /* __ASSEMBLER__ */
++#endif /* SWMMU_PLUGIN_RUNTIME_H */
+diff --git a/src/include/swmmu_runtime.h b/src/include/swmmu_runtime.h
+new file mode 100644
+index 00000000..6a94221c
+--- /dev/null
++++ b/src/include/swmmu_runtime.h
+@@ -0,0 +1,51 @@
++#ifndef _SWMMU_RUNTIME_H
++#define _SWMMU_RUNTIME_H
++
++#ifndef __ASSEMBLER__
++#include <stddef.h>
++#include <stdint.h>
++#include <asm/unistd.h>
++#include <linux/nommu_swmmu.h>
++
++uint64_t nommu_swmmu_load_u64(const void *, size_t);
++long nommu_swmmu_store_u64(void *, size_t, uint64_t);
++
++uint64_t nommu_swmmu_load_dynamic(const void *, size_t);
++long nommu_swmmu_store_dynamic(void *, size_t, uint64_t);
++
++uint64_t nommu_swmmu_bitfield_load_dynamic(const void *, size_t,
++					unsigned int, unsigned int);
++long nommu_swmmu_bitfield_store_dynamic(void *, size_t, unsigned int,
++					unsigned int, uint64_t);
++
++void *nommu_swmmu_memcpy(void *, const void *, size_t);
++void *nommu_swmmu_memmove(void *, const void *, size_t);
++void *nommu_swmmu_memset(void *, int, size_t);
++void *nommu_swmmu_memcpy_dynamic(void *, const void *, size_t);
++void *nommu_swmmu_memset_dynamic(void *, int, size_t);
++void *nommu_swmmu_memmove_dynamic(void *, const void *, size_t);
++
++int nommu_swmmu_cmpxchg_u32(void *, uint32_t, uint32_t, uint32_t *);
++
++#ifndef SYS_nommu_swmmu_alloc
++#define SYS_nommu_swmmu_alloc __NR_nommu_swmmu_alloc
++#endif
++
++#ifndef SYS_nommu_swmmu_free
++#define SYS_nommu_swmmu_free __NR_nommu_swmmu_free
++#endif
++
++#ifndef SYS_nommu_swmmu_load
++#define SYS_nommu_swmmu_load __NR_nommu_swmmu_load
++#endif
++
++#ifndef SYS_nommu_swmmu_store
++#define SYS_nommu_swmmu_store __NR_nommu_swmmu_store
++#endif
++
++#ifndef SYS_nommu_swmmu_cmpxchg
++#define SYS_nommu_swmmu_cmpxchg __NR_nommu_swmmu_cmpxchg
++#endif
++
++#endif /* __ASSEMBLER__ */
++#endif
+diff --git a/src/internal/dynlink.h b/src/internal/dynlink.h
+index 40c743e2..91c6b003 100644
+--- a/src/internal/dynlink.h
++++ b/src/internal/dynlink.h
+@@ -70,7 +70,7 @@ struct fdpic_dummy_loadmap {
+ #endif
+ 
+ #ifndef DL_NOMMU_SUPPORT
+-#define DL_NOMMU_SUPPORT 0
++#define DL_NOMMU_SUPPORT 1
+ #endif
+ 
+ #ifndef TLSDESC_BACKWARDS
+diff --git a/src/malloc/mallocng/donate.c b/src/malloc/mallocng/donate.c
+index 41d850f3..aa7e3fdc 100644
+--- a/src/malloc/mallocng/donate.c
++++ b/src/malloc/mallocng/donate.c
+@@ -35,5 +35,15 @@ static void donate(unsigned char *base, size_t len)
+ 
+ void __malloc_donate(char *start, char *end)
+ {
++#ifdef SWMMU_ALL_ACCESS
++	/*
++	 * Do not donate native loader/DSO gaps to mallocng in the
++	 * default-paged SWMMU profile.
++	 */
++	(void)start;
++	(void)end;
++	return;
++#else
+ 	donate((void *)start, end-start);
++#endif
+ }
+diff --git a/src/malloc/mallocng/malloc.c b/src/malloc/mallocng/malloc.c
+index d695ab8e..1c985cf4 100644
+--- a/src/malloc/mallocng/malloc.c
++++ b/src/malloc/mallocng/malloc.c
+@@ -37,7 +37,11 @@ static const uint8_t small_cnt_tab[][3] = {
+ 
+ static const uint8_t med_cnt_tab[4] = { 28, 24, 20, 32 };
+ 
+-struct malloc_context ctx = { 0 };
++struct malloc_context ctx = {
++#ifdef SWMMU_ALL_ACCESS
++	.brk = (uintptr_t)-1,
++#endif
++};
+ 
+ struct meta *alloc_meta(void)
+ {
+diff --git a/src/misc/nommu_swmmu.c b/src/misc/nommu_swmmu.c
+new file mode 100644
+index 00000000..3f2eebf0
+--- /dev/null
++++ b/src/misc/nommu_swmmu.c
+@@ -0,0 +1,381 @@
++#include <stdio.h>
++#include <errno.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <stdbool.h>
++#include <sys/syscall.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include "syscall.h"
++
++#include "swmmu_runtime.h"
++
++uint64_t nommu_swmmu_load_u64(const void *address,
++			       size_t size)
++{
++	uint64_t result;
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_load,
++		(uintptr_t)address, size, &result, NOMMU_SWMMU_ACCESS_SIGNAL);
++	if (ret < 0)
++		abort();
++
++	return result;
++}
++
++long nommu_swmmu_store_u64(void *address,
++			   size_t size,
++			   uint64_t value)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_store,
++		(uintptr_t)address, size, value, NOMMU_SWMMU_ACCESS_SIGNAL);
++	if (ret < 0)
++		abort();
++
++	return ret;
++}
++
++int nommu_swmmu_load_u64_checked(const void *address,
++				 size_t size,
++				 uint64_t *result)
++{
++	long ret;
++
++	if (!result)
++		return -EINVAL;
++
++	ret = syscall(SYS_nommu_swmmu_load,
++		      (uintptr_t)address, size, result,
++		      NOMMU_SWMMU_ACCESS_CHECKED);
++
++	if (ret < 0)
++		return -errno;
++
++	return 0;
++}
++
++int nommu_swmmu_store_u64_checked(void *address,
++				  size_t size,
++				  uint64_t value)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_store,
++		      (uintptr_t)address, size, value,
++		      NOMMU_SWMMU_ACCESS_CHECKED);
++
++	if (ret < 0)
++		return -errno;
++
++	return 0;
++}
++
++void *nommu_swmmu_alloc(size_t size)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_alloc, size);
++	if (ret < 0)
++		return NULL;
++
++	return (void *)(uintptr_t)ret;
++}
++
++int nommu_swmmu_free(void *address)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_free,
++		      (uintptr_t)address);
++
++	if (ret == -1)
++		return -errno;
++
++	return 0;
++}
++
++void *nommu_swmmu_memcpy(void *dst,
++			 const void *src,
++			 size_t size)
++{
++	unsigned char *destination = dst;
++	const unsigned char *source = src;
++
++	while (size--) {
++		uint64_t val;
++
++		val = nommu_swmmu_load_u64(source, 1);
++		nommu_swmmu_store_u64(destination, 1, val);
++
++		source++;
++		destination++;
++	}
++
++	return dst;
++}
++
++void *nommu_swmmu_memmove(void *dst, const void *src, size_t size)
++{
++	uintptr_t dst_addr = (uintptr_t)dst;
++	uintptr_t src_addr = (uintptr_t)src;
++	size_t i;
++
++	if (!size || dst_addr == src_addr)
++		return dst;
++
++	if (dst_addr < src_addr ||
++	    dst_addr - src_addr >= size) {
++		for (i = 0; i < size; i++) {
++			uint64_t value;
++
++			value = nommu_swmmu_load_u64(
++				(const void *)(src_addr + i), 1);
++			nommu_swmmu_store_u64(
++				(void *)(dst_addr + i), 1, value);
++		}
++	} else {
++		for (i = size; i > 0; i--) {
++			size_t offset = i - 1;
++			uint64_t value;
++
++			value = nommu_swmmu_load_u64(
++				(const void *)(src_addr + offset), 1);
++			nommu_swmmu_store_u64(
++				(void *)(dst_addr + offset), 1, value);
++		}
++	}
++
++	return dst;
++}
++
++void *nommu_swmmu_memset(void *dst, int b, size_t size)
++{
++	char *p = dst;
++
++	while (size--) {
++		nommu_swmmu_store_u64(p, 1, (uint64_t)b);
++		p++;
++	}
++	return dst;
++}
++
++uint64_t nommu_swmmu_load_dynamic(const void *address, size_t size)
++{
++	uint64_t result;
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_load,
++		      (uintptr_t)address,
++		      size,
++		      &result,
++		      NOMMU_SWMMU_ACCESS_DYNAMIC |
++		      NOMMU_SWMMU_ACCESS_SIGNAL);
++	if (ret < 0)
++		abort();
++
++	return result;
++}
++
++long nommu_swmmu_store_dynamic(void *address, size_t size, uint64_t value)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_store,
++		      (uintptr_t)address,
++		      size,
++		      value,
++		      NOMMU_SWMMU_ACCESS_DYNAMIC |
++		      NOMMU_SWMMU_ACCESS_SIGNAL);
++	if (ret < 0)
++		abort();
++
++	return ret;
++}
++
++int nommu_swmmu_load_dynamic_checked(const void *address, size_t size,
++				uint64_t *result)
++{
++	long ret;
++
++	if (!result)
++		return -EINVAL;
++
++	ret = syscall(SYS_nommu_swmmu_load,
++		      (uintptr_t)address,
++		      size,
++		      result,
++		      NOMMU_SWMMU_ACCESS_DYNAMIC |
++		      NOMMU_SWMMU_ACCESS_CHECKED);
++
++	return ret < 0 ? -errno : 0;
++}
++
++int nommu_swmmu_store_dynamic_checked(void *address, size_t size,
++				uint64_t value)
++{
++	long ret;
++
++	ret = syscall(SYS_nommu_swmmu_store,
++		      (uintptr_t)address,
++		      size,
++		      value,
++		      NOMMU_SWMMU_ACCESS_DYNAMIC |
++		      NOMMU_SWMMU_ACCESS_CHECKED);
++
++	return ret < 0 ? -errno : 0;
++}
++
++void *nommu_swmmu_memcpy_dynamic(void *destination,
++				 const void *source,
++				 size_t size)
++{
++	unsigned char *dst = destination;
++	const unsigned char *src = source;
++	void *result = destination;
++
++	while (size--) {
++		uint64_t value;
++
++		value = nommu_swmmu_load_dynamic(src, 1);
++		nommu_swmmu_store_dynamic(dst, 1, value);
++
++		src++;
++		dst++;
++	}
++
++	return result;
++}
++
++void *nommu_swmmu_memset_dynamic(void *destination,
++				 int value,
++				 size_t size)
++{
++	unsigned char *pointer = destination;
++	void *result = destination;
++
++	while (size--)
++		nommu_swmmu_store_dynamic(pointer++, 1,
++					  (unsigned char)value);
++
++	return result;
++}
++
++void *nommu_swmmu_memmove_dynamic(void *destination,
++				  const void *source,
++				  size_t size)
++{
++	uintptr_t dst_addr = (uintptr_t)destination;
++	uintptr_t src_addr = (uintptr_t)source;
++	size_t i;
++
++	if (!size || dst_addr == src_addr)
++		return destination;
++
++	if (dst_addr < src_addr ||
++	    dst_addr - src_addr >= size) {
++		for (i = 0; i < size; i++) {
++			uint64_t value;
++
++			value = nommu_swmmu_load_dynamic(
++				(const void *)(src_addr + i), 1);
++			nommu_swmmu_store_dynamic(
++				(void *)(dst_addr + i), 1, value);
++		}
++	} else {
++		for (i = size; i > 0; i--) {
++			size_t offset = i - 1;
++			uint64_t value;
++
++			value = nommu_swmmu_load_dynamic(
++				(const void *)(src_addr + offset), 1);
++			nommu_swmmu_store_dynamic(
++				(void *)(dst_addr + offset), 1, value);
++		}
++	}
++
++	return destination;
++}
++
++static int nommu_swmmu_native_cmpxchg_u32(void *address, uint32_t expected,
++					uint32_t desired, uint32_t *observed)
++{
++	uint32_t value = expected;
++
++	if (!observed || ((uintptr_t)address & 3))
++		return -EINVAL;
++
++	__atomic_compare_exchange_n(
++		(uint32_t *)address,
++		&value,
++		desired,
++		false,
++		__ATOMIC_SEQ_CST,
++		__ATOMIC_SEQ_CST);
++
++	*observed = value;
++	return 0;
++}
++
++int nommu_swmmu_cmpxchg_u32(void *address, uint32_t expected,
++			uint32_t desired, uint32_t *observed)
++{
++	long ret;
++
++	if (!observed)
++		return -EINVAL;
++
++	ret = syscall(SYS_nommu_swmmu_cmpxchg,
++		      (uintptr_t)address,
++		      expected,
++		      desired,
++		      observed,
++		      NOMMU_SWMMU_ACCESS_DYNAMIC |
++		      NOMMU_SWMMU_ACCESS_SIGNAL);
++
++	if (ret >= 0)
++		return 0;
++
++	if (errno == EOPNOTSUPP)
++		return nommu_swmmu_native_cmpxchg_u32(
++			address, expected, desired, observed);
++
++	return -errno;
++}
++
++uint64_t nommu_swmmu_bitfield_load_dynamic(const void *address,
++					size_t storage_size,
++					unsigned int shift,
++					unsigned int width)
++{
++	uint64_t value;
++	uint64_t mask;
++
++	value = nommu_swmmu_load_dynamic(address, storage_size);
++	mask = width == 64 ? ~0ULL : (1ULL << width) - 1;
++
++	return (value >> shift) & mask;
++}
++
++long nommu_swmmu_bitfield_store_dynamic(void *address,
++					size_t storage_size,
++					unsigned int shift,
++					unsigned int width,
++					uint64_t value)
++{
++	uint64_t old;
++	uint64_t mask;
++	uint64_t field_mask;
++	uint64_t updated;
++
++	old = nommu_swmmu_load_dynamic(address, storage_size);
++	mask = width == 64 ? ~0ULL : (1ULL << width) - 1;
++	field_mask = mask << shift;
++	updated = (old & ~field_mask) |
++		((value & mask) << shift);
++
++	return nommu_swmmu_store_dynamic(
++		address, storage_size, updated);
++}
+diff --git a/src/setjmp/x86_64/longjmp.s b/src/setjmp/x86_64/longjmp.s
+index 1b2661c3..5eb91bbc 100644
+--- a/src/setjmp/x86_64/longjmp.s
++++ b/src/setjmp/x86_64/longjmp.s
+@@ -3,16 +3,71 @@
+ .global longjmp
+ .type _longjmp,@function
+ .type longjmp,@function
++
+ _longjmp:
+ longjmp:
+-	xor %eax,%eax
+-	cmp $1,%esi             /* CF = val ? 0 : 1 */
+-	adc %esi,%eax           /* eax = val + !val */
+-	mov (%rdi),%rbx         /* rdi is the jmp_buf, restore regs from it */
+-	mov 8(%rdi),%rbp
+-	mov 16(%rdi),%r12
+-	mov 24(%rdi),%r13
+-	mov 32(%rdi),%r14
+-	mov 40(%rdi),%r15
+-	mov 48(%rdi),%rsp
+-	jmp *56(%rdi)           /* goto saved address without altering rsp */
++	sub $64, %rsp
++
++	/*
++	 * r14 holds the jmp_buf address while the dynamic loads execute.
++	 * r12d holds the requested longjmp value.
++	 */
++	mov %rdi, %r14
++	mov %esi, %r12d
++
++	lea 0(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 0(%rsp)
++
++	lea 8(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 8(%rsp)
++
++	lea 16(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 16(%rsp)
++
++	lea 24(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 24(%rsp)
++
++	lea 32(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 32(%rsp)
++
++	lea 40(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 40(%rsp)
++
++	lea 48(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 48(%rsp)
++
++	lea 56(%r14), %rdi
++	mov $8, %esi
++	call nommu_swmmu_load_dynamic
++	mov %rax, 56(%rsp)
++
++	/* longjmp returns val, except val==0 returns 1. */
++	xor %eax, %eax
++	cmp $1, %r12d
++	adc %r12d, %eax
++
++	mov 0(%rsp), %rbx
++	mov 8(%rsp), %rbp
++	mov 16(%rsp), %r12
++	mov 24(%rsp), %r13
++	mov 32(%rsp), %r14
++	mov 40(%rsp), %r15
++	mov 48(%rsp), %rdx
++	mov 56(%rsp), %rcx
++
++	mov %rdx, %rsp
++	jmp *%rcx
+diff --git a/src/setjmp/x86_64/setjmp.s b/src/setjmp/x86_64/setjmp.s
+index d95e4853..8353b6ec 100644
+--- a/src/setjmp/x86_64/setjmp.s
++++ b/src/setjmp/x86_64/setjmp.s
+@@ -5,18 +5,78 @@
+ .type __setjmp,@function
+ .type _setjmp,@function
+ .type setjmp,@function
++
+ __setjmp:
+ _setjmp:
+ setjmp:
+-	mov %rbx,(%rdi)         /* rdi is jmp_buf, move registers onto it */
+-	mov %rbp,8(%rdi)
+-	mov %r12,16(%rdi)
+-	mov %r13,24(%rdi)
+-	mov %r14,32(%rdi)
+-	mov %r15,40(%rdi)
+-	lea 8(%rsp),%rdx        /* this is our rsp WITHOUT current ret addr */
+-	mov %rdx,48(%rdi)
+-	mov (%rsp),%rdx         /* save return addr ptr for new rip */
+-	mov %rdx,56(%rdi)
+-	xor %eax,%eax           /* always return 0 */
++	sub $80, %rsp
++
++	/* Keep the destination and saved context on the native stack. */
++	mov %rdi, 0(%rsp)
++	mov %rbx, 8(%rsp)
++	mov %rbp, 16(%rsp)
++	mov %r12, 24(%rsp)
++	mov %r13, 32(%rsp)
++	mov %r14, 40(%rsp)
++	mov %r15, 48(%rsp)
++
++	/* Original rsp, excluding the current return address. */
++	lea 88(%rsp), %rax
++	mov %rax, 56(%rsp)
++
++	/* Return address from the original caller stack. */
++	mov 80(%rsp), %rax
++	mov %rax, 64(%rsp)
++
++	/* Store all eight jmp_buf words through the dynamic helper. */
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $0, %rdi
++	mov 8(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $8, %rdi
++	mov 16(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $16, %rdi
++	mov 24(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $24, %rdi
++	mov 32(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $32, %rdi
++	mov 40(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $40, %rdi
++	mov 48(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $48, %rdi
++	mov 56(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	mov 0(%rsp), %rdi
++	mov $8, %esi
++	add $56, %rdi
++	mov 64(%rsp), %rdx
++	call nommu_swmmu_store_dynamic
++
++	xor %eax, %eax
++	add $80, %rsp
+ 	ret
