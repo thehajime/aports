@@ -3,7 +3,7 @@
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=musl
 pkgver=1.2.5
-pkgrel=1
+pkgrel=2
 pkgdesc="the musl c library (libc) implementation"
 url="https://musl.libc.org/"
 arch="all"
@@ -22,7 +22,7 @@ nolibc) ;;
 esac
 source="https://musl.libc.org/releases/musl-$pkgver.tar.gz
 	handle-aux-at_base.patch
-	swmmu-runtime.patch
+	swmmu-runtime.diff
 
 	ldconfig
 	__stack_chk_fail_local.c
@@ -51,10 +51,10 @@ build() {
 	[ "$BOOTSTRAP" = "nocc" ] && return 0
 
 	# provide minimal libssp_nonshared.a so we don't need libssp from gcc
-	${CROSS_COMPILE}cc $CFLAGS -c "$srcdir"/__stack_chk_fail_local.c -o __stack_chk_fail_local.o
+	${CROSS_COMPILE}cc $CPPFLAGS $CFLAGS -c "$srcdir"/__stack_chk_fail_local.c -o __stack_chk_fail_local.o
 	${CROSS_COMPILE}ar r libssp_nonshared.a __stack_chk_fail_local.o
 
-	if [ "$BOOTSTRAP" != "nolibc" ]; then
+	if [ "$BOOTSTRAP" != "nolibc" ] && [ "${SWMMU_MUSL_ONLY:-0}" != 1 ]; then
 		# getconf/getent/iconv
 		local i
 		for i in getconf getent iconv ; do
@@ -62,12 +62,20 @@ build() {
 		done
 	fi
 
-	# musl sets a sane default for flags that they tune based on -O2 with alignment things turned off.
-	# see https://git.musl-libc.org/cgit/musl/commit/?id=b90841e2583237a4132bbbd74752e0e9563660cd ,
-	# and the discussion in https://www.openwall.com/lists/musl/2023/05/22/2
-	# this makes libc.so about 5% bigger in itself, but should yield an overall improved libc.so for general use.
-	# NB: if musl detects an -O it skips its own, so remove just the O value
-	export CFLAGS="${CFLAGS/-O* /}"
+	# musl sets tuned defaults when no optimization flag is supplied; retain
+	# Alpine's hardening flags while removing only -O* options.
+	local _flag _cflags=
+	for _flag in $CFLAGS; do
+		case "$_flag" in
+		-O*) ;;
+		*) _cflags="$_cflags $_flag" ;;
+		esac
+	done
+	export CFLAGS=${_cflags# }
+	if [ "${SWMMU_MUSL_ONLY:-0}" = 1 ]; then
+		export CPPFLAGS="$CPPFLAGS $SWMMU_CPPFLAGS"
+		export CFLAGS="$CFLAGS $SWMMU_CFLAGS"
+	fi
 
 	# note: not autotools
 	# shellcheck disable=2153
@@ -81,7 +89,11 @@ build() {
 		--infodir=/usr/share/info \
 		--localstatedir=/var \
 		--enable-debug
-	make
+	if [ "${SWMMU_MUSL_ONLY:-0}" = 1 ]; then
+		make CFLAGS="$CFLAGS $SWMMU_RUNTIME_CFLAGS" CPPFLAGS="$CPPFLAGS"
+	else
+		make
+	fi
 }
 
 package() {
@@ -164,12 +176,26 @@ nommu() {
 	pkgdesc="musl nommu/x86 build"
 	provides="musl=$pkgver-r$pkgrel"
 
-	export CFLAGS=${CFLAGS}" -DDL_NOMMU_SUPPORT=1"
-
-	cd "$builddir"
-	make clean
+	local original_builddir=$builddir
+	if [ "${SWMMU:-0}" = 1 ]; then
+		local CFLAGS="$CFLAGS" CPPFLAGS="$CPPFLAGS" SWMMU_MUSL_ONLY=1
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_require || return 1
+		builddir="$srcdir/musl-$pkgver-swmmu"
+		cp -a "$original_builddir" "$builddir"
+		cd "$builddir"
+		make clean
+		patch -p1 < "$srcdir/swmmu-runtime.diff" || return 1
+		swmmu_musl_flags || return 1
+	else
+		cd "$builddir"
+		make clean
+	fi
 	build
 	make DESTDIR="$subpkgdir" install
+	if [ "${SWMMU:-0}" = 1 ]; then
+		swmmu_stage_musl
+	fi
 
 	# make LDSO the be the real file, and libc the symlink
 	local rule="$(printf "%s\n\t%s\n" 'print-ldso:' '@echo $$(basename $(LDSO_PATHNAME))')"
@@ -177,12 +203,13 @@ nommu() {
 	mv -f "$subpkgdir"/usr/lib/libc.so "$subpkgdir"/lib/"$LDSO"
 	ln -sf "$LDSO" "$subpkgdir"/lib/libc.musl-$CARCH.so.1
 	rm -rf "${subpkgdir:?}"/usr
+	builddir=$original_builddir
 }
 
 sha512sums="
-b9bec472be478425d7a44363c608b283caf624af0c6be406256f361f9e749fd6c518713790e1434a7bf3d66c5435b4f65874b49a22d78c699c6366308c310fec  swmmu-runtime.patch
 7bb7f7833923cd69c7a1a9b8a5f1784bfd5289663eb6061dcd43d583e45987df8a68a1be05d75cc1c88a3f5b610653d1a70f4a9cff4d8f7fd41ae73ee058c17c  musl-1.2.5.tar.gz
 a76f79b801497ad994746cf82bb6eaf86f9e1ae646e6819fbae8532a7f4eee53a96ac1d4e789ec8f66aea2a68027b0597f7a579b3369e01258da8accfce41370  handle-aux-at_base.patch
+b9bec472be478425d7a44363c608b283caf624af0c6be406256f361f9e749fd6c518713790e1434a7bf3d66c5435b4f65874b49a22d78c699c6366308c310fec  swmmu-runtime.diff
 8d3a2d5315fc56fee7da9abb8b89bb38c6046c33d154c10d168fb35bfde6b0cf9f13042a3bceee34daf091bc409d699223735dcf19f382eeee1f6be34154f26f  ldconfig
 062bb49fa54839010acd4af113e20f7263dde1c8a2ca359b5fb2661ef9ed9d84a0f7c3bc10c25dcfa10bb3c5a4874588dff636ac43d5dbb3d748d75400756d0b  __stack_chk_fail_local.c
 0d80f37b34a35e3d14b012257c50862dfeb9d2c81139ea2dfa101d981d093b009b9fa450ba27a708ac59377a48626971dfc58e20a3799084a65777a0c32cbc7d  getconf.c

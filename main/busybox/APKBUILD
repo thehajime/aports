@@ -5,7 +5,7 @@
 # Maintainer: Sören Tempel <soeren+alpine@soeren-tempel.net>
 pkgname=busybox
 pkgver=1.36.1
-pkgrel=29
+pkgrel=30
 pkgdesc="Size optimized toolbox of many common UNIX utilities"
 url="https://busybox.net/"
 arch="all"
@@ -228,8 +228,29 @@ build() {
 	cd "$_nommudir"
 	msg "Building nommu/x86 busybox"
 	cp "$_config_nommu" .config
-	make -C "$builddir" O="$PWD" silentoldconfig
-	make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+	if [ "${SWMMU:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		# utmps/skalibs are separately packaged static libraries. Until those
+		# packages gain this profile, disable BusyBox's optional utmp integration
+		# in the SWMMU binary instead of silently linking uninstrumented code.
+		sed -i \
+			-e 's/^CONFIG_FEATURE_UTMP=y/# CONFIG_FEATURE_UTMP is not set/' \
+			-e 's/^CONFIG_FEATURE_WTMP=y/# CONFIG_FEATURE_WTMP is not set/' \
+			-e 's/^CONFIG_FEATURE_WTMP_HOST=y/# CONFIG_FEATURE_WTMP_HOST is not set/' \
+			-e 's/^CONFIG_UPTIME_UTMP_SUPPORT=y/# CONFIG_UPTIME_UTMP_SUPPORT is not set/' \
+			.config
+	fi
+	if [ "${SWMMU:-0}" = 1 ]; then
+		make -C "$builddir" O="$PWD" HOSTCC=gcc silentoldconfig
+	else
+		make -C "$builddir" O="$PWD" silentoldconfig
+	fi
+	if [ "${SWMMU:-0}" = 1 ]; then
+		make HOSTCC=gcc CC="$CC" CONFIG_EXTRA_CFLAGS='' CONFIG_EXTRA_LDLIBS=''
+	else
+		make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+	fi
 	mv busybox busybox.nommu
 }
 

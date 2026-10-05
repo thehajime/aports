@@ -1,0 +1,20 @@
+#!/bin/sh
+# A guest compiler only. HOSTCC/HOSTCXX must call the native toolchain.
+set -eu
+: "${SWMMU_REAL_CC:?missing real guest GCC}"
+: "${SWMMU_SPECS:?missing generated musl specs}"
+: "${SWMMU_PLUGIN:?missing matching GCC plugin}"
+: "${SWMMU_UAPI:?missing exported kernel UAPI}"
+: "${SWMMU_SYSROOT:?missing instrumented musl sysroot}"
+case "$SWMMU_REAL_CC" in
+*[[:space:]]*) echo 'SWMMU_REAL_CC must name one executable; use a wrapper for extra options' >&2; exit 1;;
+esac
+# CPATH/LIBRARY_PATH could silently select host libc despite the specs.
+if [ -n "${CPATH:-}${C_INCLUDE_PATH:-}${CPLUS_INCLUDE_PATH:-}${LIBRARY_PATH:-}" ]; then
+	echo 'Unset host header/library search environment variables for SWMMU builds' >&2
+	exit 1
+fi
+exec "$SWMMU_REAL_CC" "-specs=$SWMMU_SPECS" \
+	-include "$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h" \
+	-DSWMMU_ALL_ACCESS=1 \
+	"-fplugin=$SWMMU_PLUGIN" -fplugin-arg-swmmu_plugin-all-access=1 "$@"
