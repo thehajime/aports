@@ -6,13 +6,17 @@ pkgver=5.2.26
 _patchlevel=${pkgver##*.}
 _myver=${pkgver%.*}
 _patchbase=${_myver/./}
-pkgrel=0
+pkgrel=1
 pkgdesc="The GNU Bourne Again shell"
 url="https://www.gnu.org/software/bash/bash.html"
 arch="all"
 license="GPL-3.0-or-later"
 makedepends_build="bison flex"
-makedepends_host="readline-dev>8 ncurses-dev musl-libintl"
+if [ "${SWMMU:-0}" = 1 ]; then
+	makedepends_host="musl-libintl"
+else
+	makedepends_host="readline-dev>8 ncurses-dev musl-libintl"
+fi
 install="$pkgname.post-install $pkgname.post-upgrade $pkgname.pre-deinstall"
 subpackages="$pkgname-dbg $pkgname-dev $pkgname-doc"
 source="https://ftp.gnu.org/gnu/bash/bash-$_myver.tar.gz
@@ -61,20 +65,35 @@ prepare() {
 }
 
 build() {
-	./configure \
+	local swmmu_cc=
+	local native_cc=${CC:-${CHOST}-gcc}
+	local readline_opts="--with-curses --enable-readline --with-installed-readline"
+	if [ "${SWMMU:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		SWMMU_BUILD_CC=$native_cc
+		export SWMMU_BUILD_CC
+		swmmu_cc=$CC
+		readline_opts=--disable-readline
+	fi
+	CC="$native_cc" ./configure \
 		--build=$CBUILD \
 		--host=$CHOST \
 		--prefix=/usr \
 		--bindir=/bin \
 		--mandir=/usr/share/man \
 		--infodir=/usr/share/info \
-		--with-curses \
 		--disable-nls \
-		--enable-readline \
 		--without-bash-malloc \
-		--with-installed-readline
+		$readline_opts
 	# parallel build workarounds
-	make y.tab.c && make builtins/libbuiltins.a && make
+	make y.tab.c || return 1
+	if [ -n "$swmmu_cc" ]; then
+		make CC="$swmmu_cc" CC_FOR_BUILD="$native_cc" builtins/libbuiltins.a || return 1
+		make CC="$swmmu_cc" CC_FOR_BUILD="$native_cc"
+	else
+		make builtins/libbuiltins.a && make
+	fi
 }
 
 check() {
@@ -83,7 +102,14 @@ check() {
 
 package() {
 	mkdir -p "$pkgdir"/etc/bash
-	make DESTDIR="$pkgdir" install
+	if [ "${SWMMU:-0}" = 1 ]; then
+		local native_cc=${SWMMU_BUILD_CC:-${CC:-${CHOST}-gcc}}
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		make CC="$CC" CC_FOR_BUILD="$native_cc" DESTDIR="$pkgdir" install || return 1
+	else
+		make DESTDIR="$pkgdir" install || return 1
+	fi
 	install -Dm644  "$srcdir"/bashrc "$pkgdir"/etc/bash/bashrc
 	install -Dm644  "$srcdir"/profile-bashrc.sh "$pkgdir"/etc/profile.d/00-bashrc.sh
 	rm -rf "$pkgdir"/usr/share/locale
