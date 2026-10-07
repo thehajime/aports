@@ -241,14 +241,6 @@ build() {
 			-e 's/^CONFIG_FEATURE_WTMP_HOST=y/# CONFIG_FEATURE_WTMP_HOST is not set/' \
 			-e 's/^CONFIG_UPTIME_UTMP_SUPPORT=y/# CONFIG_UPTIME_UTMP_SUPPORT is not set/' \
 			.config
-	else
-		# Plain NOMMU cannot relocate a PIE or load its dynamic interpreter.
-		# Keep this profile as a static ET_EXEC binary; SWMMU uses the
-		# instrumented PIE profile above.
-		sed -i \
-			-e 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' \
-			-e 's/^CONFIG_PIE=y/# CONFIG_PIE is not set/' \
-			.config
 	fi
 	if [ "${SWMMU:-0}" = 1 ]; then
 		make -C "$builddir" O="$PWD" HOSTCC=gcc silentoldconfig
