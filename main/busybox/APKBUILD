@@ -4,7 +4,7 @@
 # Maintainer: Sören Tempel <soeren+alpine@soeren-tempel.net>
 pkgname=busybox
 pkgver=1.38.0
-pkgrel=7
+pkgrel=8
 pkgdesc="Size optimized toolbox of many common UNIX utilities"
 url="https://busybox.net/"
 arch="all"
@@ -17,7 +17,8 @@ makedepends_host="linux-headers openssl-dev>3"
 makedepends="$makedepends_build $makedepends_host"
 checkdepends="zip"
 install="$pkgname.post-install $pkgname.post-upgrade
-	$pkgname-extras.post-install $pkgname-extras.pre-deinstall"
+	$pkgname-extras.post-install $pkgname-extras.pre-deinstall
+	$pkgname-nommu.post-install $pkgname-nommu.pre-deinstall"
 subpackages="
 	$pkgname-static
 	$pkgname-doc
@@ -29,6 +30,7 @@ subpackages="
 	$pkgname-mdev-openrc:mdev_openrc
 	$pkgname-extras
 	$pkgname-extras-openrc:extras_openrc
+	$pkgname-nommu::x86_64
 	"
 options="suid net" # net needed for check()
 replaces="busybox-initscripts" # move of default.script
@@ -157,13 +159,15 @@ _dyndir="$srcdir"/build-dynamic
 _dyndir_extras="$srcdir"/build-dynamic-extras
 _config="$srcdir"/busyboxconfig
 _config_extras="$srcdir"/busyboxconfig-extras
+_nommudir="$srcdir"/build-nommu
+_config_nommu="$srcdir"/busyboxconfig-nommu
 
 prepare() {
 	# remove SGID if set as it confuses the busybox testsuite
 	chmod -R g-s "$builddir"
 	default_prepare
 
-	mkdir -p "$_staticdir" "$_dyndir" "$_dyndir_extras"
+	mkdir -p "$_staticdir" "$_dyndir" "$_dyndir_extras" "$_nommudir"
 }
 
 build() {
@@ -212,6 +216,14 @@ build() {
 	make -C "$builddir" O="$PWD" silentoldconfig
 	make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="\"$_extra_libs\""
 	mv busybox busybox.static
+
+	# build nommu
+	cd "$_nommudir"
+	msg "Building nommu/x86 busybox"
+	cp "$_config_nommu" .config
+	make -C "$builddir" O="$PWD" silentoldconfig
+	make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+	mv busybox busybox.nommu
 }
 
 check() {
@@ -307,6 +319,16 @@ static() {
 
 	install -Dm755 "$_staticdir"/busybox.static \
 		"$subpkgdir"/bin/busybox.static
+}
+
+nommu() {
+	pkgdesc="busybox nommu/x86 build"
+	provides="busybox=$pkgver-r$pkgrel"
+
+	install -Dm755 "$srcdir"/default.script \
+		"$subpkgdir"/usr/share/udhcpc/default.script
+	install -Dm755 "$_nommudir"/busybox.nommu \
+		"$subpkgdir"/bin/busybox
 }
 
 ssl_client() {
