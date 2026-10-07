@@ -95,6 +95,7 @@ source="https://busybox.net/downloads/busybox-$pkgver.tar.bz2
 	acpid.logrotate
 	busyboxconfig
 	busyboxconfig-extras
+	busyboxconfig-nommu
 	bbsuid.c
 	dad.if-up
 	ssl_client.c
