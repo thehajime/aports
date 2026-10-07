@@ -4,7 +4,7 @@
 # Maintainer: Sören Tempel <soeren+alpine@soeren-tempel.net>
 pkgname=busybox
 pkgver=1.38.0
-pkgrel=7
+pkgrel=8
 pkgdesc="Size optimized toolbox of many common UNIX utilities"
 url="https://busybox.net/"
 arch="all"
@@ -30,6 +30,10 @@ subpackages="
 	$pkgname-extras
 	$pkgname-extras-openrc:extras_openrc
 	"
+if [ "$CARCH" = "x86_64" ]; then
+	subpackages="$subpackages $pkgname-nommu"
+	install="$install $pkgname-nommu.post-install $pkgname-nommu.pre-deinstall"
+fi
 options="suid net" # net needed for check()
 replaces="busybox-initscripts" # move of default.script
 triggers="busybox.trigger=/bin:/usr/bin:/sbin:/usr/sbin:/lib/modules/*:/usr/lib/modules/*"
@@ -92,6 +96,7 @@ source="https://busybox.net/downloads/busybox-$pkgver.tar.bz2
 	acpid.logrotate
 	busyboxconfig
 	busyboxconfig-extras
+	busyboxconfig-nommu
 	bbsuid.c
 	dad.if-up
 	ssl_client.c
@@ -157,13 +162,15 @@ _dyndir="$srcdir"/build-dynamic
 _dyndir_extras="$srcdir"/build-dynamic-extras
 _config="$srcdir"/busyboxconfig
 _config_extras="$srcdir"/busyboxconfig-extras
+_nommudir="$srcdir"/build-nommu
+_config_nommu="$srcdir"/busyboxconfig-nommu
 
 prepare() {
 	# remove SGID if set as it confuses the busybox testsuite
 	chmod -R g-s "$builddir"
 	default_prepare
 
-	mkdir -p "$_staticdir" "$_dyndir" "$_dyndir_extras"
+	mkdir -p "$_staticdir" "$_dyndir" "$_dyndir_extras" "$_nommudir"
 }
 
 build() {
@@ -212,6 +219,16 @@ build() {
 	make -C "$builddir" O="$PWD" silentoldconfig
 	make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="\"$_extra_libs\""
 	mv busybox busybox.static
+
+	if [ "$CARCH" = "x86_64" ]; then
+		# build nommu
+		cd "$_nommudir"
+		msg "Building nommu/x86 busybox"
+		cp "$_config_nommu" .config
+		make -C "$builddir" O="$PWD" silentoldconfig
+		make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+		mv busybox busybox.nommu
+	fi
 }
 
 check() {
@@ -307,6 +324,18 @@ static() {
 
 	install -Dm755 "$_staticdir"/busybox.static \
 		"$subpkgdir"/bin/busybox.static
+}
+
+nommu() {
+	pkgdesc="busybox nommu/x86 build"
+	provides="busybox=$pkgver-r$pkgrel /bin/sh"
+	provider_priority=200
+
+	install -Dm755 "$srcdir"/default.script \
+		"$subpkgdir"/usr/share/udhcpc/default.script
+	install -Dm755 "$_nommudir"/busybox.nommu \
+		"$subpkgdir"/bin/busybox
+	ln -s /bin/busybox "$subpkgdir"/bin/sh
 }
 
 ssl_client() {
@@ -416,6 +445,7 @@ e00589e1de81af7a64c5716a376b14cbb4a693128aedb04995a01ea07dfdfaa941f201747f897bc9
 aa93095e20de88730f526c6f463cef711b290b9582cdbd8c1ba2bd290019150cbeaa7007c2e15f0362d5b9315dd63f60511878f0ea05e893f4fdfb4a54af3fb1  acpid.logrotate
 d84416b9f78c82f389ff0e810187083b11a632b081265fa63eda264296c90b87e77d5b6f2b3344bb37e67e690b5fcbcf28e119cd637b5a58cc9c77e48ffb145a  busyboxconfig
 33dbba1a23ae4f15a1c778f7cdbe2edb1d8ac39d6617ce4d2421237fe87ec2facba7ad45716ffb6ebaf12c99bd6ee216d2ea1be101aa7a973a92dd140baecfa6  busyboxconfig-extras
+347adb67b0fa1ad2f382fc9444693d29b5e99802165a896e23902323f8c41a6817808ed00aae9cf59ffe1b5eccde4aa6536e99868aaedeff750804a359fd5f87  busyboxconfig-nommu
 0becc2186d6c32fb0c401cf7bc0e46268b38ce8892db33be1daf40273024c1c02d518283f44086a313a2ccef34230a1d945ec148cc173f26e6aa9d88a7426e54  bbsuid.c
 afc27da5f95bec3e3ccb5b1fcb5bd80a8317d8753e6c70cc0750d0875313e44bf2e487472c8499d7bbe5afba3e583c75548ccdcff4dcadc94bb791f53fb77ba3  dad.if-up
 1c7c78afb274d1316725b22585452efd7de9a80ad326f099f25e34d0877c5d81ced579e2dc795314221e316f58071374f61ee22c6ffd34072266525f65d3614c  ssl_client.c
