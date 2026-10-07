@@ -3,7 +3,7 @@
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=musl
 pkgver=1.2.6
-pkgrel=5
+pkgrel=6
 pkgdesc="the musl c library (libc) implementation"
 url="https://musl.libc.org/"
 arch="all"
@@ -19,6 +19,9 @@ nocc)	pkgname="musl-dev"; subpackages="";;
 nolibc) ;;
 *)	subpackages="$subpackages $pkgname-utils";;
 esac
+if [ "$CARCH" = "x86_64" ] && [ -z "$BOOTSTRAP" ]; then
+	subpackages="$subpackages $pkgname-nommu"
+fi
 source="https://musl.libc.org/releases/musl-$pkgver.tar.gz
 	handle-aux-at_base.patch
 	0001-add-stub-for-pthread_mutexattr_setprioceiling.patch
@@ -174,6 +177,23 @@ dev() {
 
 	# for backwards compatibility
 	provides="libc-dev=$pkgver-r$pkgrel"
+}
+
+nommu() {
+	pkgdesc="musl nommu/x86 build"
+	provides="musl=$pkgver-r$pkgrel"
+
+	cd "$builddir"
+	make clean
+	export CFLAGS="${CFLAGS/-O* /} -DDL_NOMMU_SUPPORT=1"
+	build
+	make DESTDIR="$subpkgdir" install
+
+	local rule="$(printf "%s\n\t%s\n" 'print-ldso:' '@echo $$(basename $(LDSO_PATHNAME))')"
+	local LDSO=$(make -f Makefile --eval "$rule" print-ldso)
+	mv -f "$subpkgdir"/usr/lib/libc.so "$subpkgdir"/lib/"$LDSO"
+	ln -sf "$LDSO" "$subpkgdir"/lib/libc.musl-$CARCH.so.1
+	rm -rf "${subpkgdir:?}"/usr
 }
 
 sha512sums="
