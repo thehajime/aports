@@ -1,0 +1,42 @@
+--- busybox-1.37.0.orig/shell/hush.c	2024-02-12 22:09:21.000000000 +0900
++++ busybox-1.37.0/shell/hush.c	2026-09-29 11:18:30.167910723 +0900
+@@ -10928,9 +10928,19 @@
+ static int FAST_FUNC builtin_cd(char **argv)
+ {
+ 	const char *newdir;
++	char *oldpwd;
+ 
+ 	argv = skip_dash_dash(argv);
+ 	newdir = argv[0];
++
++	if (newdir && strcmp(newdir, "-") == 0) {
++		newdir = get_local_var_value("OLDPWD");
++		if (newdir == NULL) {
++			bb_error_msg("cd: OLDPWD not set");
++			return EXIT_FAILURE;
++		}
++	}
++
+ 	if (newdir == NULL) {
+ 		/* bash does nothing (exitcode 0) if HOME is ""; if it's unset,
+ 		 * bash says "bash: cd: HOME not set" and does nothing
+@@ -10939,11 +10949,19 @@
+ 		const char *home = get_local_var_value("HOME");
+ 		newdir = home ? home : "/";
+ 	}
++
++	oldpwd = xstrdup(get_cwd(1));
+ 	if (chdir(newdir)) {
+ 		/* Mimic bash message exactly */
++		free(oldpwd);
+ 		bb_perror_msg("cd: %s", newdir);
+ 		return EXIT_FAILURE;
+ 	}
++
++	/* POSIX requires OLDPWD to become the previous working directory. */
++	set_local_var(xasprintf("OLDPWD=%s", oldpwd), SETFLAG_EXPORT);
++	free(oldpwd);
++
+ 	/* Read current dir (get_cwd(1) is inside) and set PWD.
+ 	 * Note: do not enforce exporting. If PWD was unset or unexported,
+ 	 * set it again, but do not export. bash does the same.
