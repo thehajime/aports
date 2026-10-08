@@ -188,6 +188,10 @@ nommu() {
 		patch -p1 < "$srcdir/swmmu-runtime.diff" || return 1
 		swmmu_musl_flags || return 1
 	else
+		# The NOMMU loader needs its MAP_FIXED fallback even when SWMMU is
+		# disabled. Without this define, it treats NOMMU's EINVAL behavior as
+		# a fatal mapping failure when loading shared libraries.
+		local CFLAGS="$CFLAGS -DDL_NOMMU_SUPPORT=1"
 		cd "$builddir"
 		make clean
 	fi
