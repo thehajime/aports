@@ -4,7 +4,7 @@
 pkgname=openssl
 pkgver=3.5.9
 _abiver=${pkgver%.*.*}
-pkgrel=0
+pkgrel=1
 pkgdesc="Toolkit for Transport Layer Security (TLS)"
 url="https://www.openssl.org/"
 arch="all"
@@ -27,6 +27,15 @@ subpackages="
 source="https://github.com/openssl/openssl/releases/download/openssl-$pkgver/openssl-$pkgver.tar.gz
 	auxv.patch
 	"
+
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	# Build the instrumented runtime and development libraries independently of
+	# Alpine's ordinary OpenSSL package.
+	source="https://github.com/openssl/openssl/releases/download/openssl-$pkgver/openssl-$pkgver.tar.gz
+	auxv.patch"
+	subpackages="$pkgname-dev libcrypto$_abiver:_libcrypto libssl$_abiver:_libssl"
+	install=
+fi
 builddir="$srcdir/openssl-$pkgver"
 
 # secfixes:
@@ -183,7 +192,12 @@ builddir="$srcdir/openssl-$pkgver"
 #     - CVE-2023-4807
 
 build() {
-	local target optflags
+	local target optflags feature_opts="enable-fips enable-ktls"
+	if [ "${SWMMU:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		feature_opts="no-fips no-ktls no-asm no-tests"
+	fi
 
 	# openssl will prepend crosscompile always core CC et al
 	CC=${CC#"$CROSS_COMPILE"}
@@ -222,8 +236,7 @@ build() {
 		--prefix=/usr \
 		--libdir=lib \
 		--openssldir=/etc/ssl \
-		enable-fips \
-		enable-ktls \
+		$feature_opts \
 		shared \
 		no-zlib \
 		no-async \
@@ -247,6 +260,9 @@ build() {
 }
 
 check() {
+	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+	[ "${SWMMU:-0}" = 1 ] && return 0
+
 	# AFALG tests have a sporadic test failure, just delete the broken
 	# test for now.
 	rm -f test/recipes/30-test_afalg.t
@@ -259,11 +275,18 @@ package() {
 	provides="openssl3=$pkgver-r$pkgrel"
 	replaces="openssl3"
 
-	make DESTDIR="$pkgdir" install
+	if [ "${SWMMU:-0}" = 1 ]; then
+		make DESTDIR="$pkgdir" install_sw
+		# Keep the instrumented headers and shared libraries in the staged
+		# guest sysroot for subsequent SWMMU package builds.
+		make DESTDIR="$SWMMU_SYSROOT" install_sw
+	else
+		make DESTDIR="$pkgdir" install
+	fi
 	# make sure we don't leave this (empty) dir world-readable
 	install -d -o root -g root -m 0750 "$pkgdir"/etc/ssl/private
-	# remove the script c_rehash
-	rm "$pkgdir"/usr/bin/c_rehash
+	# remove the script c_rehash when included by the full Alpine build
+	rm -f "$pkgdir"/usr/bin/c_rehash
 }
 
 dev() {

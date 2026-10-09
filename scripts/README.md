@@ -10,3 +10,11 @@ Internal helpers, not intended to be invoked directly:
 
 - `mkimg.base.sh`: shared common logic.
 - `mkimg.*.sh`: declare individual profiles.
+
+# SWMMU build helpers
+
+For compiler-plugin instrumented NOMMU userspace, start with
+[`swmmu-prepare.sh`](swmmu-prepare.sh) and follow
+[`../docs/swmmu-build.md`](../docs/swmmu-build.md). The `headers` command
+exports the configured kernel's UAPI; `check` verifies the plugin, GCC ABI,
+headers, runtime, and staged musl sysroot before building packages.

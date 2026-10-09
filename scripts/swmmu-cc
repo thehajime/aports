@@ -6,6 +6,7 @@ set -eu
 : "${SWMMU_PLUGIN:?missing matching GCC plugin}"
 : "${SWMMU_UAPI:?missing exported kernel UAPI}"
 : "${SWMMU_SYSROOT:?missing instrumented musl sysroot}"
+SWMMU_RUNTIME_HEADER=${SWMMU_RUNTIME_HEADER:-$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h}
 case "$SWMMU_REAL_CC" in
 *[[:space:]]*) echo 'SWMMU_REAL_CC must name one executable; use a wrapper for extra options' >&2; exit 1;;
 esac
@@ -15,6 +16,6 @@ if [ -n "${CPATH:-}${C_INCLUDE_PATH:-}${CPLUS_INCLUDE_PATH:-}${LIBRARY_PATH:-}" 
 	exit 1
 fi
 exec "$SWMMU_REAL_CC" "-specs=$SWMMU_SPECS" \
-	-include "$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h" \
+	-include "$SWMMU_RUNTIME_HEADER" \
 	-DSWMMU_ALL_ACCESS=1 \
 	"-fplugin=$SWMMU_PLUGIN" -fplugin-arg-swmmu_plugin-all-access=1 "$@"

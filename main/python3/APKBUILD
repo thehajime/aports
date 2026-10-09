@@ -132,11 +132,43 @@ provides="pythonispython3=$pkgver-r$pkgrel"
 prepare() {
 	default_prepare
 
-	# force system libs
-	rm -r Modules/expat
+	# The regular Alpine build links system expat. Leave CPython's bundled
+	# copy in place for SWMMU until an instrumented expat sysroot is available.
+	[ "${SWMMU_ONLY:-0}" = 1 ] || rm -r Modules/expat
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local _swmmu_cc="$CC"
+		local _swmmu_cflags="${CFLAGS/-fstack-clash-protection} -O2 -fno-lto -fno-stack-clash-protection"
+		local _swmmu_cxxflags="${CXXFLAGS/-fstack-clash-protection} -O2 -fno-lto -fno-stack-clash-protection"
+		export CFLAGS_NODIST="$_swmmu_cflags"
+		export CXXFLAGS_NODIST="$_swmmu_cxxflags"
+		export LDFLAGS_NODIST="$LDFLAGS -Wl,-z,stack-size=0x200000"
+		# Deliberately identify a Linux/glibc build host and musl target so
+		# configure never tries to execute SWMMU guest probes on the builder.
+		ac_cv_file__dev_ptmx=yes \
+		ac_cv_file__dev_ptc=no \
+		ac_cv_buggy_getaddrinfo=no \
+		CC="$_swmmu_cc" HOSTCC="${HOSTCC:-gcc}" \
+		./configure \
+			--build=x86_64-linux-gnu \
+			--host=x86_64-linux-musl \
+			--prefix=/usr \
+			--enable-ipv6 \
+			--enable-shared \
+			--disable-optimizations \
+			--disable-test-modules \
+			--with-build-python="python$_basever" \
+			--with-openssl="$SWMMU_SYSROOT/usr" \
+			--with-openssl-rpath=no \
+			--without-ensurepip || return 1
+		make HOSTCC="${HOSTCC:-gcc}" CC="$_swmmu_cc"
+		return
+	fi
+
 	# set thread stack size to 2MB so we don't segfault before we hit
 	# sys.getrecursionlimit()
 	# note: raised from 1 as we ran into some stack limit on x86_64 too
@@ -184,6 +216,8 @@ build() {
 }
 
 check() {
+	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+
 	# test that we reach recursionlimit before we segfault
 	cat > test-stacksize.py <<-EOF
 	import threading
@@ -228,6 +262,15 @@ EOF
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		make -j1 DESTDIR="$pkgdir" install
+		ln -sf python3.14 "$pkgdir"/usr/bin/python3
+		find "$pkgdir"/usr/lib/python$_basever -type d -name __pycache__ \
+			-prune -exec rm -rf {} +
+		rm -rf "$pkgdir"/usr/share/man
+		return 0
+	fi
+
 	make -j1 DESTDIR="$pkgdir" EXTRA_CFLAGS="$CFLAGS" install maninstall
 	install -Dm644 LICENSE "$pkgdir"/usr/share/licenses/$pkgname/LICENSE
 
@@ -318,3 +361,22 @@ f1ecb004871dc7e0c794eebe94ca1084b211924ecc97edc57f32a7c8df5d572e9ca6cdc45d6fc080
 46dd8230ee2ab66e9c4157c10b2bd9c414fd7f30be0bee73e21a9eea88f63fff362d47828e0fc77ddc59df097b414b21505f8b5f98bc866381115c58ae3f4862  externally-managed
 ab8eaa2858d5109049b1f9f553198d40e0ef8d78211ad6455f7b491af525bffb16738fed60fc84e960c4889568d25753b9e4a1494834fea48291b33f07000ec2  musl-find_library.patch
 "
+
+# Optional instrumented interpreter for the SWMMU NOMMU guest. Keep Alpine's
+# normal multi-architecture recipe unchanged when SWMMU_ONLY is not set.
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	arch="x86_64"
+	subpackages="$pkgname-nommu::x86_64"
+	makedepends="bash python3-dev openssl-dev"
+	depends=""
+fi
+
+nommu() {
+	[ "${SWMMU:-0}" = 1 ] || {
+		error "Set SWMMU=1 to build the instrumented Python NOMMU package"
+		return 1
+	}
+	pkgdesc="Python interpreter built for SWMMU NOMMU"
+	depends="musl-nommu libssl3 libcrypto3"
+	amove usr/bin/python* usr/lib/libpython$_basever.so* usr/lib/python$_basever
+}

@@ -7,7 +7,7 @@ pkgname=nginx
 #  Odd-numbered versions are mainline (development) versions.
 # NOTE: When bumping, always rebuild all nginx modules (nginx-mod-* aports)!
 pkgver=1.30.4
-pkgrel=3
+pkgrel=4
 # Revision of nginx-tests to use for check().
 _tests_rev=4d1de3f357afeb91865d024b27516d6b67aad86e
 _njs_ver=0.9.9
@@ -32,6 +32,36 @@ _makedepends_base="
 	pcre2-dev
 	perl-dev
 	zlib-dev
+	"
+_nginx_full_module_opts="
+	--with-http_ssl_module
+	--with-http_v2_module
+	--with-http_v3_module
+	--with-http_realip_module
+	--with-http_addition_module
+	--with-http_xslt_module=dynamic
+	--with-http_image_filter_module=dynamic
+	--with-http_geoip_module=dynamic
+	--with-http_sub_module
+	--with-http_dav_module
+	--with-http_flv_module
+	--with-http_mp4_module
+	--with-http_gunzip_module
+	--with-http_gzip_static_module
+	--with-http_auth_request_module
+	--with-http_random_index_module
+	--with-http_secure_link_module
+	--with-http_degradation_module
+	--with-http_slice_module
+	--with-http_stub_status_module
+	--with-http_perl_module=dynamic
+	--with-mail=dynamic
+	--with-mail_ssl_module
+	--with-stream=dynamic
+	--with-stream_ssl_module
+	--with-stream_realip_module
+	--with-stream_geoip_module=dynamic
+	--with-stream_ssl_preread_module
 	"
 makedepends="
 	$_makedepends_base
@@ -66,6 +96,7 @@ subpackages="
 	$pkgname-openrc
 	$pkgname-vim::noarch
 	$pkgname-mod-dev:_mod_dev:noarch
+	$pkgname-nommu::x86_64
 	"
 source="https://nginx.org/download/nginx-$pkgver.tar.gz
 	$pkgname-tests-$_tests_rev.tar.gz::https://github.com/nginx/nginx-tests/archive/$_tests_rev.tar.gz
@@ -90,6 +121,7 @@ source="https://nginx.org/download/nginx-$pkgver.tar.gz
 	$pkgname.logrotate
 	$pkgname.initd
 	$pkgname.confd
+	nginx-swmmu.conf
 	"
 
 # secfixes:
@@ -319,7 +351,26 @@ _http_zstd_so="ngx_http_zstd_filter_module.so ngx_http_zstd_static_module.so"
 _add_module "rtmp" "v1.2.2" "https://github.com/arut/nginx-rtmp-module"
 _rtmp_provides="$pkgname-rtmp"  # for backward compatibility
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	# The minimal SWMMU package is built independently from the full Alpine
+	# package, so it only fetches nginx and profile configuration.
+	source="https://nginx.org/download/nginx-$pkgver.tar.gz
+	nginx-swmmu.conf"
+	subpackages="$pkgname-nommu::x86_64"
+	makedepends="linux-headers openssl-dev"
+	checkdepends=
+	options="!check"
+	pkgusers=
+	pkggroups=
+	install=
+fi
+
 prepare() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		default_prepare
+		return
+	fi
+
 	rmdir "$srcdir"/naxsi-$_http_naxsi_ver/naxsi_src/libinjection
 	mv "$srcdir"/libinjection-$_libinjection_rev \
 		"$srcdir"/naxsi-$_http_naxsi_ver/naxsi_src/libinjection
@@ -343,6 +394,29 @@ prepare() {
 }
 
 _build() {
+	local _module_opts="$_nginx_full_module_opts"
+	local _crossbuild_opts=
+	local _make_cc="${CC:-cc}"
+	local _configure_cc="$_make_cc"
+	local _file_aio=--with-file-aio
+	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ]; then
+		_crossbuild_opts="--crossbuild=Linux:x86_64"
+		_file_aio=
+		# Nginx configure executes its compiler probes. Use the native build
+		# compiler for those probes; compile the actual guest binary with the
+		# instrumented musl wrapper below.
+		_configure_cc="${SWMMU_CONFIGURE_CC:-gcc}"
+		# OpenSSL headers and shared libraries come from the instrumented guest
+		# sysroot staged by the SWMMU openssl package build.
+		_module_opts="
+			--without-pcre2
+			--without-pcre
+			--without-http_rewrite_module
+			--without-http_gzip_module
+			--with-http_ssl_module
+			"
+	fi
+
 	if $_has_luajit; then
 		export LUAJIT_LIB="$(pkgconf --variable=libdir luajit)"
 		export LUAJIT_INC="$(pkgconf --variable=includedir luajit)"
@@ -356,7 +430,7 @@ _build() {
 	# Enable support for Redis store in the http-keyval module.
 	export NGX_HTTP_KEYVAL_ZONE_REDIS=1
 
-	./configure \
+	CC="$_configure_cc" ./configure \
 		--prefix=/var/lib/$pkgname \
 		--sbin-path=/usr/sbin/$pkgname \
 		--modules-path=/$_modules_dir \
@@ -373,54 +447,54 @@ _build() {
 		--user=$pkgusers \
 		--group=$_grp_ngx \
 		--with-threads \
-		--with-file-aio \
+		$_file_aio \
 		--with-compat \
 		\
-		--with-http_ssl_module \
-		--with-http_v2_module \
-		--with-http_v3_module \
-		--with-http_realip_module \
-		--with-http_addition_module \
-		--with-http_xslt_module=dynamic \
-		--with-http_image_filter_module=dynamic \
-		--with-http_geoip_module=dynamic \
-		--with-http_sub_module \
-		--with-http_dav_module \
-		--with-http_flv_module \
-		--with-http_mp4_module \
-		--with-http_gunzip_module \
-		--with-http_gzip_static_module \
-		--with-http_auth_request_module \
-		--with-http_random_index_module \
-		--with-http_secure_link_module \
-		--with-http_degradation_module \
-		--with-http_slice_module \
-		--with-http_stub_status_module \
-		--with-http_perl_module=dynamic \
-		--with-mail=dynamic \
-		--with-mail_ssl_module \
-		--with-stream=dynamic \
-		--with-stream_ssl_module \
-		--with-stream_realip_module \
-		--with-stream_geoip_module=dynamic \
-		--with-stream_ssl_preread_module \
+		$_module_opts \
 		\
 		${_njs_mods:+"--add-dynamic-module=$srcdir/njs-$_njs_ver/nginx"} \
 		$_extra_flags \
+		$_crossbuild_opts \
 		"$@"
 
-	make
+	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ]; then
+		make CC="$CC"
+	else
+		make
+	fi
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local SWMMU_MINIMAL_BUILD=1 _extra_flags= _njs_mods=
+		_build
+		rm -rf objs-swmmu
+		mv objs objs-swmmu
+		return
+	fi
+
 	_build --with-debug
 	mv objs objs-debug
 
 	make clean
 	_build
+
+	if [ "${SWMMU:-0}" = 1 ]; then
+		local SWMMU_MINIMAL_BUILD=1 _extra_flags= _njs_mods=
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		mv objs objs-normal
+		_build
+		mv objs objs-swmmu
+		mv objs-normal objs
+	fi
 }
 
 check() {
+	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+
 	msg "Running nginx tests..."
 	cd "$srcdir"/nginx-tests-*
 
@@ -435,6 +509,8 @@ check() {
 }
 
 package() {
+	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+
 	make DESTDIR="$pkgdir" install
 	chown root:root "$pkgdir"/usr/sbin/nginx
 
@@ -477,6 +553,52 @@ package() {
 	rm ./etc/$pkgname/koi-* ./etc/$pkgname/win-utf
 
 	rm -rf ./run ./etc/$pkgname/*.default
+}
+
+prepare_subpackages() {
+	local i
+	cd "$startdir"
+	for i in $subpackages; do
+		subpkg_set "$i"
+		msg "Running split function $subpkgsplit..."
+		mkdir -p "$pkgdir" "$pkgbasedir/$subpkgname" "$pkgbasedir/.control.$subpkgname"
+		subpkgdir="$pkgbasedir/$subpkgname" subpkgname="$subpkgname" subpkgarch="$subpkgarch" \
+			"$abuild_path" $forceroot $verbose pre_split $subpkgsplit prepare_package
+		postcheck "$pkgbasedir/$subpkgname" "$subpkgname"
+	done
+	subpkg_unset
+	postcheck "$pkgdir" "$pkgname" || return 1
+}
+
+pre_split() {
+	provides=
+	install_if=
+	cd "$pkgdir"
+}
+
+nommu() {
+	[ "${SWMMU:-0}" = 1 ] || {
+		error "Set SWMMU=1 to build the nginx NOMMU package"
+		return 1
+	}
+	pkgdesc="nginx HTTP and TLS server built for SWMMU NOMMU"
+	depends="musl-nommu libssl3"
+	mkdir -p "$subpkgdir/usr/sbin" "$subpkgdir/etc/nginx"
+	install -Dm755 "$builddir"/objs-swmmu/nginx "$subpkgdir"/usr/sbin/nginx
+	install -Dm644 "$srcdir"/nginx-swmmu.conf \
+		"$subpkgdir"/etc/nginx/nginx-swmmu.conf
+}
+
+prepare_package() {
+	[ ! -d "${subpkgdir:-$pkgdir}" ] && die "Missing ${subpkgname:+sub}pkgdir for ${subpkgname:-$pkgname}"
+	stripbin
+	prepare_metafiles
+	prepare_trace_rpaths
+	prepare_symlinks
+	prepare_pkgconfig_provides
+	prepare_command_provides
+	prepare_py_provides
+	archcheck
 }
 
 # http://nginx.org/en/docs/debugging_log.html
@@ -583,6 +705,7 @@ c209a220b6afc9354a1c4c39817199327425485b3da44778d632cdfd1d95b8412c58ba9b27a5c965
 09b110693e3f4377349ccea3c43cb8199c8579ee351eae34283299be99fdf764b0c1bddd552e13e4d671b194501618b29c822e1ad53b34101a73a63954363dbb  nginx.logrotate
 ee10a5687740dde0c3d18d8b3555f49fcdc6abfc0a3bc2de1de3be0e99951a346fe8027d916aab73071ecd4e2c50871e7c867aca3a7a0fd16e3374c5caed1c57  nginx.initd
 0b9b9ed01ac077e334c034faa2679f6e26740fb3362eebf8cef82d22b2af2a3faaa53bae3c9e14af51cbf64720a7c66431905ca5cc43f978366456cc4e3b7f4a  nginx.confd
+8e84d4a07d36a1e0e83a5bf4a15098305ae29f007910b7d9cae55084d13acb7d481ce5aff7ea86a2e3311175d79d1c8d9beb00d45c5bcc0fd245cfdd5c37b8ec  nginx-swmmu.conf
 fe3cab73b0894ae2c770dcf6058a72124bbdd3d9f1df68c16abd3040adb70032604162e9f40e113755c62705ac9eaa6533ba3144ad5460784c3d3470d94891cc  ngx_devel_kit-0.3.5.tar.gz
 fb8be1ed4786cf2adb7e06fb94b532465c905057902ffdebb59dc29a14d05b1e2490e15df7060a6cd0686475c3dd75684b7f2d45372cef5ccff1d822b075b1fe  ngx_dynamic_healthcheck-1.3.8.tar.gz
 6981e83fa2dd10d4048f54f7e9881212e15b1592ad275f380defa59306ee9b976d7e5555764d0350c6fcebf2c4a153220b6d4dbfaa149016b85ac61b9d018266  ngx_dynamic_upstream-2.3.5.tar.gz
@@ -618,3 +741,10 @@ a0da355888398f86a6b5d065e58c05f9e057589ee785be9f515d77d7a020ae5a7b0656f5af30fb3b
 6feb544face95121ea076db5df8ca34854085b57602e732c7ba427be5e3f2bf668729d45497a2c91212f98ed8a2c347aa8778a54594f5d241e39e094a2556e4c  zstd-nginx-module-0.1.1.tar.gz
 3f8c803221854c4b1a06aadc6313fbfec74bd7179c0ee51d4365b26ffa8875881a6e1e48f777a9c9efbb9170ab7478a82920d5448a2c2df485503d37bb03ab81  nginx-rtmp-module-1.2.2.tar.gz
 "
+
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	sha512sums="
+	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
+	8e84d4a07d36a1e0e83a5bf4a15098305ae29f007910b7d9cae55084d13acb7d481ce5aff7ea86a2e3311175d79d1c8d9beb00d45c5bcc0fd245cfdd5c37b8ec  nginx-swmmu.conf
+	"
+fi

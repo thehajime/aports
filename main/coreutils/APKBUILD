@@ -32,6 +32,48 @@ source="https://ftp.gnu.org/gnu/coreutils/coreutils-$pkgver.tar.xz
 #     - CVE-2017-18018
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		# A 256 KiB automatic buffer overflows the small NOMMU user stack.
+		sed -i 's/IO_BUFSIZE = 256 \* 1024/IO_BUFSIZE = 4096/' \
+			"$builddir/src/ioblksize.h"
+		local _swmmu_cc="$CC"
+		# GCC emits stack probes after the SWMMU plugin's instrumentation pass;
+		# disable them until the plugin handles those generated accesses. Also
+		# force scalar code: configure cannot run host CPU checks when cross-building.
+		utils_cv_pclmul_intrinsic_exists=no \
+		utils_cv_avx2_pclmul_intrinsic_exists=no \
+		utils_cv_avx512_pclmul_intrinsic_exists=no \
+		utils_cv_avx2_intrinsic_exists=no \
+		utils_cv_avx512_intrinsic_exists=no \
+		CC="${SWMMU_CONFIGURE_CC:-gcc}" \
+		CFLAGS="$CFLAGS -fno-lto -fno-stack-clash-protection" \
+		CONFIG_SHELL=/bin/bash \
+		./configure \
+			--build=$CBUILD \
+			--host=x86_64-linux-musl \
+			--prefix=/usr \
+			--bindir=/usr/bin \
+			--sysconfdir=/etc \
+			--disable-nls \
+			--disable-acl \
+			--disable-xattr \
+			--without-openssl \
+			--enable-no-install-program=chroot,hostname,su,kill,uptime \
+			--disable-single-binary || return 1
+		# Include coreutils' config before the SWMMU runtime shim, since gnulib
+		# supplies replacement standard headers in lib/.
+		cat > "$srcdir/coreutils-swmmu-runtime.h" <<-EOF
+		#include "$builddir/lib/config.h"
+		#include "$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h"
+		EOF
+		SWMMU_RUNTIME_HEADER="$srcdir/coreutils-swmmu-runtime.h"
+		export SWMMU_RUNTIME_HEADER
+		make CC="$_swmmu_cc"
+		return
+	fi
+
 	# statvfs API is broken on 32 bit and musl implementation is equally
 	# broken on 64 bit. Avoid using it.
 	# https://lists.gnu.org/archive/html/bug-coreutils/2024-08/msg00021.html
@@ -56,6 +98,8 @@ build() {
 }
 
 check() {
+	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+
 	case "$CARCH" in
 	armhf)
 		make check XFAIL_TESTS="test-memset_explicit" ;;
@@ -72,6 +116,12 @@ check() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		cd "$builddir"
+		make DESTDIR="$pkgdir" install-exec
+		return 0
+	fi
+
 	# we put this separately
 	depends="
 		coreutils-env=$pkgver-r$pkgrel
@@ -127,3 +177,22 @@ sha512sums="
 9e7f32fee800aa5c3e42fcff64eecf66ed562348569aa365986202d10a23b7af5f9f7ae269238801bbbc29ccbb195d6698f3676328d4b597ed55219b20a024ce  renameat2-fakeroot.patch
 7c0d6b65d42a1aa3a94e9a9ad24618f814a38c5c03eca5add29114badc29299aa9e744f4c814d5f6e75db5df57396c47a0cf7016ac461549e47a0eace44e8eee  coreutils-9.10-dash-tests.patch
 "
+
+# A separately installable instrumented coreutils package
+# for the SWMMU NOMMU guest. Retain the upstream package source and build.
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	arch="x86_64"
+	subpackages="$pkgname-nommu::x86_64"
+	makedepends="bash"
+	install=
+fi
+
+nommu() {
+	[ "${SWMMU:-0}" = 1 ] || {
+		error "Set SWMMU=1 to build the instrumented coreutils NOMMU package"
+		return 1
+	}
+	pkgdesc="Core file, text and shell utilities built for SWMMU NOMMU"
+	depends="musl-nommu"
+	amove usr/bin usr/libexec/coreutils
+}

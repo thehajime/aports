@@ -1,0 +1,138 @@
+From: SWMMU nginx CI proposal
+Subject: [PATCH] CI: share a SWMMU nginx rootfs across benchmark matrix
+
+Draft for `.github/workflows/ci.yml` on `ci/uml-nommu`. The rootfs/APK
+assembly is performed once, uploaded as an artifact, and downloaded by each
+measurement matrix leg. The existing workflow already builds the UML kernel
+and base image; this proposal reuses those artifacts. The referenced helper
+scripts still need to be added/adapted with the CI workflow owners.
+
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -25,1 +25,112 @@ jobs:
+ jobs:
++  build_swmmu_nginx_rootfs:
++    # Reuse the current UML build and aports APK artifacts. Rootfs setup is
++    # shared once; each benchmark leg gets its own extracted writable copy.
++    needs: [build_nommu_apks]
++    runs-on: ubuntu-22.04
++    timeout-minutes: 45
++    permissions:
++      contents: read
++    steps:
++      - name: Checkout CI support files
++        uses: actions/checkout@v6
++        with:
++          ref: ci/uml-nommu
++      - name: Download SWMMU APK artifacts
++        uses: actions/download-artifact@v4
++        with:
++          name: aports-nommu-apks
++          path: aports-artifacts
++      - name: Prepare nginx guest rootfs once
++        run: |
++          mkdir -p "$RUNNER_TEMP/swmmu-rootfs"
++          # Install ordinary packages before BusyBox/musl so APK triggers run
++          # with host Alpine tools, then install the NOMMU replacements. Also
++          # create a temporary certificate and static nginx response.
++          .github/workflows/build-swmmu-nginx-rootfs.sh \
++            --apks aports-artifacts \
++            --output "$RUNNER_TEMP/swmmu-rootfs/rootfs.tar"
++      - name: Upload shared rootfs
++        uses: actions/upload-artifact@v4
++        with:
++          name: swmmu-nginx-rootfs
++          path: ${{ runner.temp }}/swmmu-rootfs/rootfs.tar
++          if-no-files-found: error
++
++  nginx_swmmu_benchmark:
++    needs: [build_swmmu_nginx_rootfs, build_uml]
++    runs-on: ubuntu-22.04
++    timeout-minutes: 60
++    strategy:
++      fail-fast: false
++      matrix:
++        worker_processes: [1, 4]
++        connections: [4, 16, 64]
++        include:
++          - worker_processes: 1
++            connections: 4
++            wrk_threads: 2
++          - worker_processes: 1
++            connections: 16
++            wrk_threads: 2
++          - worker_processes: 1
++            connections: 64
++            wrk_threads: 2
++          - worker_processes: 4
++            connections: 4
++            wrk_threads: 2
++          - worker_processes: 4
++            connections: 16
++            wrk_threads: 2
++          - worker_processes: 4
++            connections: 64
++            wrk_threads: 2
++    steps:
++      - name: Checkout CI support files
++        uses: actions/checkout@v6
++        with:
++          ref: ci/uml-nommu
++      - name: Download shared guest rootfs
++        uses: actions/download-artifact@v4
++        with:
++          name: swmmu-nginx-rootfs
++          path: ${{ runner.temp }}/swmmu-rootfs
++      - name: Download SWMMU UML image
++        uses: actions/download-artifact@v4
++        with:
++          name: uml-docker-image-um-nommu-sas
++          path: ${{ runner.temp }}/uml-image
++      - name: Load UML image and extract kernel
++        run: |
++          docker load -i "$RUNNER_TEMP/uml-image/uml-image.tar"
++          cid=$(docker create uml-ci/alpine:3.20.3-um-nommu-sas)
++          docker cp "$cid:/root/vmlinux" "$RUNNER_TEMP/vmlinux"
++          docker rm "$cid"
++          mkdir -p rootfs
++          tar -xf "$RUNNER_TEMP/swmmu-rootfs/rootfs.tar" -C rootfs
++      - name: Run nginx smoke test and wrk sample
++        env:
++          WORKERS: ${{ matrix.worker_processes }}
++          CONNECTIONS: ${{ matrix.connections }}
++          WRK_THREADS: ${{ matrix.wrk_threads }}
++        run: |
++          mkdir -p "output/w${WORKERS}-c${CONNECTIONS}"
++          # Harness boots the writable rootfs copy with zpoline=1 seccomp=on,
++          # passes CAP_SYS_RAWIO and CAP_SYS_PTRACE, starts nginx, checks HTTP
++          # and TLS locally, then runs wrk from a separate network container.
++          .github/workflows/run-swmmu-nginx-benchmark.sh \
++            --kernel "$RUNNER_TEMP/vmlinux" \
++            --rootfs rootfs \
++            --workers "$WORKERS" \
++            --threads "$WRK_THREADS" \
++            --connections "$CONNECTIONS" \
++            --duration 30 \
++            --output "output/w${WORKERS}-c${CONNECTIONS}"
++      - name: Upload raw measurements and plot data
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: swmmu-nginx-w${{ matrix.worker_processes }}-c${{ matrix.connections }}
++          path: output/
++          if-no-files-found: warn
++
+Notes before applying:
+
+1. Add/adapt `build-swmmu-nginx-rootfs.sh` and
+   `run-swmmu-nginx-benchmark.sh`. Keep the rootfs as one shared artifact, but
+   extract a fresh writable copy in every matrix job.
+2. The current `build_nommu_apks` artifact contains BusyBox and musl only.
+   Extend its build step to add instrumented OpenSSL, nginx, and coreutils APKs
+   from the pinned aports revision, preserving package signatures and the
+   matching GCC/plugin provenance.
+3. The benchmark matrix is intentionally ordinary push CI, matching the
+   existing `benchmark` job style. It tests worker counts and connection counts
+   under each same wrk condition; publish results before considering thresholds.
+4. The current NOMMU UML build is uniprocessor. Keep workers=4 as a measured
+   comparison, but do not expect it to scale like a multi-CPU server.

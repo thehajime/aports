@@ -92,6 +92,7 @@ swmmu_guest_profile() {
 	esac
 	export SWMMU_REAL_CC="$real_cc"
 	export SWMMU_SPECS="$srcdir/swmmu.specs" SWMMU_PLUGIN SWMMU_UAPI SWMMU_SYSROOT
+	export SWMMU_RUNTIME_HEADER="${SWMMU_RUNTIME_HEADER:-$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h}"
 	install -m755 "$wrapper_source" "$srcdir/swmmu-cc"
 	export CC="$srcdir/swmmu-cc"
 }

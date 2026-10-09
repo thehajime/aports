@@ -2,6 +2,34 @@
 
 These instructions capture the cloud workflow used for the BusyBox and musl NOMMU proposal. Recheck paths, versions, hashes, and kernel configuration in each task: cloud scratch files are not durable, and generated outputs may belong to an earlier source revision.
 
+## SWMMU application profile
+
+The end goal is for every userspace program run by SWMMU to be compiler-plugin instrumented. Expand coverage incrementally, starting with required libraries and core utilities; do not assume that packages built with the ordinary Alpine compiler are compatible. Use the opt-in `SWMMU=1`/`SWMMU_ONLY=1` recipes and `scripts/swmmu-profile.sh` so guest flags do not leak into host build tools. The reusable toolchain preparation script is [`scripts/swmmu-prepare.sh`](scripts/swmmu-prepare.sh); sysroot setup and package order are documented in [`docs/swmmu-build.md`](docs/swmmu-build.md).
+
+For SWMMU coreutils work, build only the required command subset first and keep it separate from the normal `coreutils` package. Preserve Alpine's usual package behavior when `SWMMU` is unset. Add commands as runtime coverage requires, then validate them in the guest and record any unsupported syscall or compiler access before broadening the set.
+
+### TODO: GCC SWMMU instrumentation for generated stack probes
+
+Coreutils' `wc` required a temporary `-fno-stack-clash-protection` workaround. GCC can emit stack-clash probe instructions in the function prologue (for example, an instruction such as `orq $0, (%rsp)`) after the SWMMU GIMPLE pass has run. The pass currently inserts checks around GIMPLE memory references; a later backend-generated probe therefore is not rewritten through the SWMMU runtime. On the NOMMU UML guest this uninstrumented access caused `wc` to segfault, followed by UML's `Attempted to kill init` panic. The final working package uses the compiler flag workaround; see the conditional SWMMU branch in `main/coreutils/APKBUILD` and the run-specific `coreutils-run/wc-only.log` / `wc-probes.log` when available.
+
+Follow-up investigation for the compiler/plugin task:
+
+- Reproduce with a clean, checksum-verified coreutils source and the matching Alpine GCC/plugin ABI. Build `wc` once with the current profile and once with `-fstack-clash-protection`; preserve the exact compiler command, GCC version, plugin version, and generated assembly (`-save-temps` or `objdump -dr`).
+- Locate when the probe first appears in GCC's pass dumps. The plugin currently registers its regular `GIMPLE_PASS` after the first `ssa` pass, while SWMMU all-access mode uses an IPA pass after `inline` (`scripts/gcc-plugins/swmmu_plugin.c`). Determine whether probing is introduced during RTL expansion/prologue generation or an earlier pass for the exact GCC version.
+- Evaluate a GIMPLE-side approach that makes probe accesses visible before lowering, and/or a late RTL pass that recognizes and instruments generated stack-probe memory operations. Keep probe sequences, stack pointer updates, CFA/unwind metadata, and stack-clash guard-page semantics correct; do not blindly instrument every `%rsp`-relative access.
+- Add a focused compiler-plugin regression test that compiles a function with a large/dynamic stack allocation, verifies generated probe accesses are routed through SWMMU, and runs the binary in a SWMMU guest. Include both fixed and dynamic allocations and probe sizes spanning one or more guard pages.
+- Remove the package-level `-fno-stack-clash-protection` workaround only after assembly inspection and guest runtime coverage pass with stack-clash protection enabled. Keep the coreutils 4 KiB `IO_BUFSIZE` workaround separate: it addresses NOMMU user-stack capacity, not missing instrumentation of generated probe instructions.
+
+### UML SMP configuration note
+
+In the Linux kernel tree, `arch/um/Kconfig` declares `UML_SUBARCH_SUPPORTS_SMP` and makes `SMP` depend on it. The x86 UML subarchitecture selects that capability in `arch/x86/um/Kconfig` only when `X86_CX8 && MMU` is enabled. Consequently current x86 NOMMU UML configurations (plain NOMMU and SAS/SWMMU) cannot enable kernel SMP; the limitation is a Kconfig/platform capability constraint, not just a default setting. Ordinary MMU UML can select SMP and runs vCPUs as host threads.
+
+### TODO: Reconcile UML SMP Kconfig with upstream `uml/next`
+
+The local `feature-swmmu-nommu` tree restricts `UML_SUBARCH_SUPPORTS_SMP` to `X86_CX8 && MMU` in `arch/x86/um/Kconfig`. Upstream UML's current `next` branch selects it with `X86_CX8` alone, so plain x86 NOMMU UML can select SMP there. Treat this as a likely incomplete feature-branch carry-over, not a fundamental UML NOMMU limitation. Before changing it, compare the relevant UML SMP commits and dependencies in the exact upstream base being integrated; check whether the SWMMU/SAS subarchitecture also needs its own SMP enablement or runtime fixes. Then build and boot plain NOMMU with `CONFIG_SMP=y` and multiple `ncpus`, confirm CPUs online and run a small workload comparison. Keep SAS/SWMMU SMP as a separate question: the MMU UML wrk result only shows that SMP can help this workload when vCPUs run concurrently; it does not establish that SAS/SWMMU SMP is implemented or correct.
+
+For automated nginx measurements, use a dedicated opt-in job/template rather than running UML as a side effect of every generic package build. The job needs a matching UML kernel/plugin, an Alpine GCC toolchain with matching plugin ABI, an instrumented musl/OpenSSL sysroot, `CAP_SYS_RAWIO` for `zpoline=1`, and a separate client/container on a reachable network. Publish raw wrk output and machine-readable summary as CI artifacts; treat short samples as regression indicators, not performance claims. Keep changes to the active CI definition as a reviewable patch if another task is editing it concurrently.
+
 ## Start by preserving the checkout
 
 Before editing or building, record the repository state and identify existing local work:
