@@ -56,7 +56,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE/linux-ci/.github/workflows/build-nommu-apks.sh:/build.sh:ro" \
             --volume "$RUNNER_TEMP/nommu-apks:/out" \
             --volume "$RUNNER_TEMP/aports-distfiles:/var/cache/distfiles" \
-            alpine:edge sh /build.sh
+            mirror.gcr.io/library/alpine:edge sh /build.sh
       - name: Create source manifest and package archive
         env:
           KERNEL_SHA: ${{ steps.source-revisions.outputs.kernel_sha }}
