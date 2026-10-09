@@ -13,13 +13,15 @@ subpackages="
 	$pkgname-dbg
 	$pkgname-libintl:libintl:noarch
 	$pkgname-dev
-	$pkgname-nommu::x86_64
 	"
 case "$BOOTSTRAP" in
 nocc)	pkgname="musl-dev"; subpackages="";;
 nolibc) ;;
 *)	subpackages="$subpackages $pkgname-utils";;
 esac
+if [ "$CARCH" = "x86_64" ] && [ -z "$BOOTSTRAP" ]; then
+	subpackages="$subpackages $pkgname-nommu"
+fi
 source="https://musl.libc.org/releases/musl-$pkgver.tar.gz
 	handle-aux-at_base.patch
 	0001-add-stub-for-pthread_mutexattr_setprioceiling.patch
