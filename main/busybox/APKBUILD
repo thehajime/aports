@@ -17,8 +17,7 @@ makedepends_host="linux-headers openssl-dev>3"
 makedepends="$makedepends_build $makedepends_host"
 checkdepends="zip"
 install="$pkgname.post-install $pkgname.post-upgrade
-	$pkgname-extras.post-install $pkgname-extras.pre-deinstall
-	$pkgname-nommu.post-install $pkgname-nommu.pre-deinstall"
+	$pkgname-extras.post-install $pkgname-extras.pre-deinstall"
 subpackages="
 	$pkgname-static
 	$pkgname-doc
@@ -30,8 +29,11 @@ subpackages="
 	$pkgname-mdev-openrc:mdev_openrc
 	$pkgname-extras
 	$pkgname-extras-openrc:extras_openrc
-	$pkgname-nommu::x86_64
 	"
+if [ "$CARCH" = "x86_64" ]; then
+	subpackages="$subpackages $pkgname-nommu"
+	install="$install $pkgname-nommu.post-install $pkgname-nommu.pre-deinstall"
+fi
 options="suid net" # net needed for check()
 replaces="busybox-initscripts" # move of default.script
 triggers="busybox.trigger=/bin:/usr/bin:/sbin:/usr/sbin:/lib/modules/*:/usr/lib/modules/*"
@@ -219,27 +221,29 @@ build() {
 	make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="\"$_extra_libs\""
 	mv busybox busybox.static
 
-	# build nommu
-	cd "$_nommudir"
-	msg "Building nommu/x86 busybox"
-	cp "$_config_nommu" .config
-	if [ "${SWMMU:-0}" = 1 ]; then
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
-		# Do not link optional integrations built from non-instrumented libraries.
-		sed -i \
-			-e 's/^CONFIG_FEATURE_UTMP=y/# CONFIG_FEATURE_UTMP is not set/' \
-			-e 's/^CONFIG_FEATURE_WTMP=y/# CONFIG_FEATURE_WTMP is not set/' \
-			-e 's/^CONFIG_FEATURE_WTMP_HOST=y/# CONFIG_FEATURE_WTMP_HOST is not set/' \
-			-e 's/^CONFIG_UPTIME_UTMP_SUPPORT=y/# CONFIG_UPTIME_UTMP_SUPPORT is not set/' \
-			.config
-		make -C "$builddir" O="$PWD" HOSTCC=gcc silentoldconfig
-		make HOSTCC=gcc CC="$CC" CONFIG_EXTRA_CFLAGS='' CONFIG_EXTRA_LDLIBS=''
-	else
-		make -C "$builddir" O="$PWD" silentoldconfig
-		make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+	if [ "$CARCH" = "x86_64" ]; then
+		# build nommu
+		cd "$_nommudir"
+		msg "Building nommu/x86 busybox"
+		cp "$_config_nommu" .config
+		if [ "${SWMMU:-0}" = 1 ]; then
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			# Do not link optional integrations built from non-instrumented libraries.
+			sed -i \
+				-e 's/^CONFIG_FEATURE_UTMP=y/# CONFIG_FEATURE_UTMP is not set/' \
+				-e 's/^CONFIG_FEATURE_WTMP=y/# CONFIG_FEATURE_WTMP is not set/' \
+				-e 's/^CONFIG_FEATURE_WTMP_HOST=y/# CONFIG_FEATURE_WTMP_HOST is not set/' \
+				-e 's/^CONFIG_UPTIME_UTMP_SUPPORT=y/# CONFIG_UPTIME_UTMP_SUPPORT is not set/' \
+				.config
+			make -C "$builddir" O="$PWD" HOSTCC=gcc silentoldconfig
+			make HOSTCC=gcc CC="$CC" CONFIG_EXTRA_CFLAGS='' CONFIG_EXTRA_LDLIBS=''
+		else
+			make -C "$builddir" O="$PWD" silentoldconfig
+			make CONFIG_EXTRA_CFLAGS="$_extra_cflags" CONFIG_EXTRA_LDLIBS="$_extra_libs"
+		fi
+		mv busybox busybox.nommu
 	fi
-	mv busybox busybox.nommu
 }
 
 check() {
@@ -339,12 +343,14 @@ static() {
 
 nommu() {
 	pkgdesc="busybox nommu/x86 build"
-	provides="busybox=$pkgver-r$pkgrel"
+	provides="busybox=$pkgver-r$pkgrel /bin/sh"
+	provider_priority=200
 
 	install -Dm755 "$srcdir"/default.script \
 		"$subpkgdir"/usr/share/udhcpc/default.script
 	install -Dm755 "$_nommudir"/busybox.nommu \
 		"$subpkgdir"/bin/busybox
+	ln -s /bin/busybox "$subpkgdir"/bin/sh
 }
 
 ssl_client() {
