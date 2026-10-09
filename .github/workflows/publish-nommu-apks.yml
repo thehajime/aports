@@ -9,10 +9,10 @@ on:
         type: string
         default: feature-swmmu-nommu
       aports_ref:
-        description: Pinned aports source revision for the NOMMU package profiles
+        description: Pinned master/edge aports source revision for the NOMMU package profiles
         required: true
         type: string
-        default: f9ec9629f50634534a0ee89339ca5ed5633aa503
+        default: 2fa7f100befb14cb343a659446e539237c66366c
 
 permissions:
   contents: read
@@ -32,8 +32,11 @@ jobs:
           sparse-checkout: |
             main/busybox
             main/musl
+            main/openssl
+            main/python3
             scripts/swmmu-profile.sh
             scripts/swmmu-cc
+            scripts/swmmu-prepare.sh
       - name: Checkout selected Linux source
         uses: actions/checkout@v6
         with:
@@ -62,7 +65,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE/linux-ci/.github/workflows/build-nommu-apks.sh:/build.sh:ro" \
             --volume "$RUNNER_TEMP/nommu-apks:/out" \
             --volume "$RUNNER_TEMP/aports-distfiles:/var/cache/distfiles" \
-            alpine:3.20.3 sh /build.sh
+            alpine:edge sh /build.sh
       - name: Create source manifest and package archive
         env:
           KERNEL_SHA: ${{ steps.source-revisions.outputs.kernel_sha }}
