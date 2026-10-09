@@ -68,6 +68,7 @@ jobs:
           KERNEL_SHA: ${{ steps.source-revisions.outputs.kernel_sha }}
           APORTS_SHA: ${{ steps.source-revisions.outputs.aports_sha }}
         run: |
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/nommu-apks"
           cat > "$RUNNER_TEMP/nommu-apks/manifest.txt" <<EOF
           kernel_repository=https://github.com/thehajime/linux-private
           kernel_commit=$KERNEL_SHA
