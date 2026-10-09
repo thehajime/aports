@@ -1,0 +1,88 @@
+name: Publish temporary UML NOMMU APK profiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: linux-private ref used to build the SWMMU compiler plugin and UAPI
+        required: true
+        type: string
+        default: feature-swmmu-nommu
+      aports_ref:
+        description: Pinned aports source revision for the NOMMU package profiles
+        required: true
+        type: string
+        default: f9ec9629f50634534a0ee89339ca5ed5633aa503
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout selected aports package sources
+        uses: actions/checkout@v6
+        with:
+          repository: thehajime/aports
+          ref: ${{ inputs.aports_ref }}
+          path: aports-source
+          sparse-checkout: |
+            main/busybox
+            main/musl
+            scripts/swmmu-profile.sh
+            scripts/swmmu-cc
+      - name: Checkout selected Linux source
+        uses: actions/checkout@v6
+        with:
+          repository: thehajime/linux-private
+          ref: ${{ inputs.kernel_ref }}
+          path: kernel-source
+          fetch-depth: 1
+      - name: Checkout the package build script
+        uses: actions/checkout@v6
+        with:
+          repository: thehajime/linux-private
+          ref: ci/uml-nommu
+          path: linux-ci
+          sparse-checkout: .github/workflows/build-nommu-apks.sh
+      - name: Record exact source revisions
+        id: source-revisions
+        run: |
+          echo "kernel_sha=$(git -C kernel-source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "aports_sha=$(git -C aports-source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build signed NOMMU APK profiles
+        run: |
+          mkdir -p "$RUNNER_TEMP/nommu-apks" "$RUNNER_TEMP/aports-distfiles"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/aports-source:/src:ro" \
+            --volume "$GITHUB_WORKSPACE/kernel-source:/kernel:ro" \
+            --volume "$GITHUB_WORKSPACE/linux-ci/.github/workflows/build-nommu-apks.sh:/build.sh:ro" \
+            --volume "$RUNNER_TEMP/nommu-apks:/out" \
+            --volume "$RUNNER_TEMP/aports-distfiles:/var/cache/distfiles" \
+            alpine:3.20.3 sh /build.sh
+      - name: Create source manifest and package archive
+        env:
+          KERNEL_SHA: ${{ steps.source-revisions.outputs.kernel_sha }}
+          APORTS_SHA: ${{ steps.source-revisions.outputs.aports_sha }}
+        run: |
+          cat > "$RUNNER_TEMP/nommu-apks/manifest.txt" <<EOF
+          kernel_repository=https://github.com/thehajime/linux-private
+          kernel_commit=$KERNEL_SHA
+          aports_repository=https://github.com/thehajime/aports
+          aports_commit=$APORTS_SHA
+          profiles=nommu-plain,nommu-swmmu
+          EOF
+          tar -czf "$RUNNER_TEMP/nommu-apks.tar.gz" -C "$RUNNER_TEMP/nommu-apks" .
+      - name: Publish prerelease assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ci-nommu-${{ steps.source-revisions.outputs.kernel_sha }}-${{ steps.source-revisions.outputs.aports_sha }}
+          target_commitish: master
+          name: Temporary NOMMU APKs for kernel ${{ steps.source-revisions.outputs.kernel_sha }}
+          body_path: ${{ runner.temp }}/nommu-apks/manifest.txt
+          prerelease: true
+          make_latest: false
+          files: ${{ runner.temp }}/nommu-apks.tar.gz
