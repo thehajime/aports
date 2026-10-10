@@ -92,6 +92,9 @@ build_profile() {
 		SWMMU_ONLY=1 abuild -r
 		cd "$HOME/aports-$profile/main/gmp"
 		SWMMU_ONLY=1 abuild -r
+		# The target development package provides pc:gmp and conflicts with
+		# the host development packages used to build the kernel plugin.
+		apk del gmp-dev mpfr-dev mpc1-dev isl-dev
 		cd "$HOME/aports-$profile/main/coreutils"
 		SWMMU_ONLY=1 abuild -r
 	fi
