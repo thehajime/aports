@@ -183,7 +183,7 @@ sha512sums="
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages="$pkgname-nommu::x86_64"
-	makedepends="bash"
+	makedepends="bash gmp-dev"
 	install=
 fi
 
