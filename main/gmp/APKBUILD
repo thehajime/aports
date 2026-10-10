@@ -57,6 +57,11 @@ build() {
 }
 
 check() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		# The SWMMU binaries need a UML guest and cannot run in the build container.
+		echo "Skipping GMP tests for SWMMU cross-build"
+		return 0
+	fi
 	[ "$CBUILD" = "$CHOST" ] && make check
 }
 
