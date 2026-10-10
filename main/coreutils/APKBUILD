@@ -60,6 +60,7 @@ build() {
 			--disable-acl \
 			--disable-xattr \
 			--without-openssl \
+			--without-gmp \
 			--enable-no-install-program=chroot,hostname,su,kill,uptime \
 			--disable-single-binary || return 1
 		# Include coreutils' config before the SWMMU runtime shim, since gnulib
@@ -183,7 +184,7 @@ sha512sums="
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages="$pkgname-nommu::x86_64"
-	makedepends="bash gmp-nommu-dev"
+	makedepends="bash"
 	install=
 fi
 

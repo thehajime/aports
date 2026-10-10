@@ -8,6 +8,10 @@ The end goal is for every userspace program run by SWMMU to be compiler-plugin i
 
 For SWMMU coreutils work, build only the required command subset first and keep it separate from the normal `coreutils` package. Preserve Alpine's usual package behavior when `SWMMU` is unset. Add commands as runtime coverage requires, then validate them in the guest and record any unsupported syscall or compiler access before broadening the set.
 
+### TODO: Add GMP support to SWMMU coreutils
+
+The current SWMMU `coreutils-nommu` build uses `--without-gmp` because the GMP-enabled build has not yet succeeded in the SWMMU profile. Keep GMP disabled until its target dependency, configure detection, and runtime support work end to end; then add focused build and guest coverage before enabling it.
+
 ### TODO: GCC SWMMU instrumentation for generated stack probes
 
 Coreutils' `wc` required a temporary `-fno-stack-clash-protection` workaround. GCC can emit stack-clash probe instructions in the function prologue (for example, an instruction such as `orq $0, (%rsp)`) after the SWMMU GIMPLE pass has run. The pass currently inserts checks around GIMPLE memory references; a later backend-generated probe therefore is not rewritten through the SWMMU runtime. On the NOMMU UML guest this uninstrumented access caused `wc` to segfault, followed by UML's `Attempted to kill init` panic. The final working package uses the compiler flag workaround; see the conditional SWMMU branch in `main/coreutils/APKBUILD` and the run-specific `coreutils-run/wc-only.log` / `wc-probes.log` when available.

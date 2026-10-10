@@ -30,7 +30,7 @@ for profile in nommu-plain nommu-swmmu; do
 	cp -a /src/main/musl /src/main/busybox "/home/builder/aports-$profile/main/"
 	cp -a /src/scripts/swmmu-profile.sh /src/scripts/swmmu-cc "/home/builder/aports-$profile/scripts/"
 	if [ "$profile" = nommu-swmmu ]; then
-		cp -a /src/main/openssl /src/main/python3 /src/main/nginx /src/main/coreutils /src/main/gmp \
+		cp -a /src/main/openssl /src/main/python3 /src/main/nginx /src/main/coreutils \
 			"/home/builder/aports-$profile/main/"
 		cp -a /src/scripts/swmmu-prepare.sh "/home/builder/aports-$profile/scripts/"
 		mkdir -p "/out/$profile/toolchain"
@@ -90,11 +90,6 @@ build_profile() {
 		SWMMU_ONLY=1 abuild -r
 		cd "$HOME/aports-$profile/main/nginx"
 		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/gmp"
-		SWMMU_ONLY=1 abuild -r
-		# The target development package provides pc:gmp and conflicts with
-		# the host development packages used to build the kernel plugin.
-		apk del gmp-dev mpfr-dev mpc1-dev isl-dev
 		cd "$HOME/aports-$profile/main/coreutils"
 		SWMMU_ONLY=1 abuild -r
 	fi
@@ -108,7 +103,7 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-swmmu ]; then
-		for package in libcrypto3 libssl3 openssl-dev python3-nommu nginx-nommu gmp-nommu-dev coreutils-nommu; do
+		for package in libcrypto3 libssl3 openssl-dev python3-nommu nginx-nommu coreutils-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SWMMU APK for $package; matches: $*" >&2
