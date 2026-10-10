@@ -60,7 +60,7 @@ build() {
 			--disable-acl \
 			--disable-xattr \
 			--without-openssl \
-			--without-gmp \
+			--without-libgmp \
 			--enable-no-install-program=chroot,hostname,su,kill,uptime \
 			--disable-single-binary || return 1
 		# Include coreutils' config before the SWMMU runtime shim, since gnulib
