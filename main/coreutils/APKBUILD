@@ -59,7 +59,6 @@ build() {
 			--disable-nls \
 			--disable-acl \
 			--disable-xattr \
-			--without-libgmp \
 			--without-openssl \
 			--enable-no-install-program=chroot,hostname,su,kill,uptime \
 			--disable-single-binary || return 1
@@ -184,7 +183,7 @@ sha512sums="
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages="$pkgname-nommu::x86_64"
-	makedepends="bash"
+	makedepends="bash gmp-nommu-dev"
 	install=
 fi
 

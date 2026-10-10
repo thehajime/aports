@@ -24,6 +24,24 @@ prepare() {
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local _swmmu_cc="$CC"
+		CC="$_swmmu_cc" \
+		CFLAGS="$CFLAGS -fno-lto" \
+		./configure \
+			--build=$CBUILD \
+			--host=x86_64-linux-musl \
+			--with-sysroot="$SWMMU_SYSROOT" \
+			--prefix=/usr \
+			--disable-cxx \
+			--disable-shared \
+			--enable-static || return 1
+		make CC="$_swmmu_cc"
+		return
+	fi
+
 	CFLAGS="$CFLAGS -flto=auto" \
 	./configure \
 		--build=$CBUILD \
@@ -43,6 +61,10 @@ check() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		make DESTDIR="$pkgdir" install
+		return 0
+	fi
 	make DESTDIR="$pkgdir" install
 }
 
@@ -61,3 +83,21 @@ sha512sums="
 e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df5219538eb003e4b5343f989aaa00f96321559063ed8c8f29fd2  gmp-6.3.0.tar.xz
 85e367507f49288f14c929717ffc71c3b553315c95682bf2464422c3f778f5d1eae3ef30af23653b7046fb921b5862c26cdcde9fe909dd4209d589e633e8853c  gcc15.patch
 "
+
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	arch="x86_64"
+	subpackages="$pkgname-nommu-dev:_nommu_dev"
+	makedepends="bash"
+	install=
+fi
+
+
+_nommu_dev() {
+	[ "${SWMMU:-0}" = 1 ] || {
+		error "Set SWMMU=1 to build the instrumented GMP NOMMU package"
+		return 1
+	}
+	pkgdesc="GMP development files for SWMMU NOMMU"
+	default_dev
+	depends="musl-nommu"
+}

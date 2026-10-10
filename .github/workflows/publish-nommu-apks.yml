@@ -23,6 +23,7 @@ jobs:
           sparse-checkout: |
             main/busybox
             main/coreutils
+            main/gmp
             main/musl
             main/nginx
             main/openssl
@@ -73,7 +74,7 @@ jobs:
           aports_branch=nommu-uml-master-swmmu
           profiles=nommu-plain,nommu-swmmu
           alpine_base=edge
-          swmmu_packages=libcrypto3,libssl3,openssl-dev,python3-nommu,nginx-nommu,coreutils-nommu
+          swmmu_packages=libcrypto3,libssl3,openssl-dev,python3-nommu,nginx-nommu,gmp-nommu-dev,coreutils-nommu
           EOF
           tar -czf "$RUNNER_TEMP/nommu-apks.tar.gz" -C "$RUNNER_TEMP/nommu-apks" .
       - name: Publish prerelease assets
