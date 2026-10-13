@@ -4,6 +4,18 @@ on:
   push:
     branches:
       - nommu-uml-master-swmmu
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: linux-private ref used to build the SWMMU compiler plugin and UAPI
+        required: true
+        type: string
+        default: feature-swmmu-nommu
+      aports_ref:
+        description: aports source revision for the NOMMU package profiles
+        required: true
+        type: string
+        default: nommu-uml-master-swmmu
 
 permissions:
   contents: read
@@ -18,7 +30,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: thehajime/aports
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.aports_ref || github.sha }}
           path: aports-source
           sparse-checkout: |
             main/busybox
@@ -34,14 +46,14 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: thehajime/linux-private
-          ref: feature-swmmu-nommu
+          ref: ${{ inputs.kernel_ref || 'feature-swmmu-nommu' }}
           path: kernel-source
           fetch-depth: 1
       - name: Use the aports package build helper
         uses: actions/checkout@v6
         with:
           repository: thehajime/aports
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.aports_ref || github.sha }}
           path: aports-ci
           sparse-checkout: .github/workflows/build-nommu-apks.sh
       - name: Record exact source revisions
