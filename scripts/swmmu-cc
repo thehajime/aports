@@ -18,4 +18,5 @@ fi
 exec "$SWMMU_REAL_CC" "-specs=$SWMMU_SPECS" \
 	-include "$SWMMU_RUNTIME_HEADER" \
 	-DSWMMU_ALL_ACCESS=1 \
-	"-fplugin=$SWMMU_PLUGIN" -fplugin-arg-swmmu_plugin-all-access=1 "$@"
+	"-fplugin=$SWMMU_PLUGIN" -fplugin-arg-swmmu_plugin-all-access=1 "$@" \
+	-Wl,--no-relax
