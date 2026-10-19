@@ -1,0 +1,492 @@
+--- a/src/misc/nommu_swmmu.c
++++ b/src/misc/nommu_swmmu.c
+@@ -162,14 +162,152 @@
+ 	return dst;
+ }
+ 
++#define NOMMU_SWMMU_VA_BASE 0x1000000000ULL
++#define NOMMU_SWMMU_MIN_ADDRESS 4096UL
++
++/* The kernel owns this immutable window; holes retain PROT_NONE guards. */
++uintptr_t __nommu_swmmu_direct_start __attribute__((visibility("hidden")));
++extern uintptr_t nommu_swmmu_direct_start __attribute__((alias("__nommu_swmmu_direct_start")));
++uintptr_t __nommu_swmmu_direct_end __attribute__((visibility("hidden")));
++extern uintptr_t nommu_swmmu_direct_end __attribute__((alias("__nommu_swmmu_direct_end")));
++uintptr_t __nommu_swmmu_direct_key __attribute__((visibility("hidden"))) = UINTPTR_MAX;
++extern uintptr_t nommu_swmmu_direct_key __attribute__((alias("__nommu_swmmu_direct_key")));
++static int nommu_swmmu_direct_ready;
++
++static inline __attribute__((always_inline)) int nommu_swmmu_direct_span(uintptr_t address, size_t size)
++{
++    uintptr_t end = __atomic_load_n(&__nommu_swmmu_direct_end, __ATOMIC_ACQUIRE);
++    uintptr_t start = __atomic_load_n(&__nommu_swmmu_direct_start, __ATOMIC_RELAXED);
++
++    return end && address >= start && address < end && size <= end - address;
++}
++
++static inline __attribute__((always_inline)) int nommu_swmmu_native_range(uintptr_t address, size_t size)
++{
++    uintptr_t start, end;
++
++    if (!__atomic_load_n(&nommu_swmmu_direct_ready, __ATOMIC_ACQUIRE)) {
++        uint64_t bounds[2] = { 0, 0 };
++        register unsigned long nr __asm__("rax") = SYS_nommu_swmmu_load;
++        register unsigned long flags __asm__("r10") = (1U << 3);
++
++        __asm__ volatile("syscall" : "+a"(nr)
++            : "D"(0UL), "S"(sizeof(bounds)), "d"(bounds), "r"(flags)
++            : "rcx", "r11", "memory");
++        if ((long)nr == 0 && bounds[0] < bounds[1]) {
++            __atomic_store_n(&__nommu_swmmu_direct_start, bounds[0], __ATOMIC_RELAXED);
++            __atomic_store_n(&__nommu_swmmu_direct_end, bounds[1], __ATOMIC_RELEASE);
++            /* Select an aligned power-of-two subset of the queried window.
++             * A page-contained scalar access cannot cross its aligned end.
++             * UINTPTR_MAX is the initial key and matches no 64-bit address.
++             */
++            unsigned shift = 63 - __builtin_clzll(bounds[1] - bounds[0]);
++            if (bounds[0]) {
++                unsigned alignment = __builtin_ctzll(bounds[0]);
++                if (alignment < shift) shift = alignment;
++            }
++            while (shift >= 12 && (bounds[0] >> shift) < 2)
++                shift--;
++            if (shift >= 12 && (bounds[0] >> shift) >= 2 &&
++                (bounds[0] >> shift) <= (UINTPTR_MAX >> 6)) {
++                uintptr_t key = ((bounds[0] >> shift) << 6) | shift;
++                __atomic_store_n(&__nommu_swmmu_direct_key, key, __ATOMIC_RELEASE);
++            }
++        }
++        __atomic_store_n(&nommu_swmmu_direct_ready, 1, __ATOMIC_RELEASE);
++    }
++    start = __atomic_load_n(&__nommu_swmmu_direct_start, __ATOMIC_RELAXED);
++    end = __atomic_load_n(&__nommu_swmmu_direct_end, __ATOMIC_RELAXED);
++    return (size == 1 || size == 2 || size == 4 || size == 8) &&
++        end && address >= start && address < end && size <= end - address &&
++        size <= 4096 - (address & 4095);
++}
++
++static uint64_t nommu_swmmu_native_load(const void *address, size_t size)
++{
++    uintptr_t value;
++
++    switch (size) {
++    case 1: {
++        uint8_t byte;
++        __asm__ volatile("movb (%1), %0" : "=q"(byte) : "r"(address) : "memory");
++        value = byte;
++        break;
++    }
++    case 2: {
++        uint16_t word;
++        __asm__ volatile("movw (%1), %0" : "=r"(word) : "r"(address) : "memory");
++        value = word;
++        break;
++    }
++    case 4: {
++        uint32_t dword;
++        __asm__ volatile("movl (%1), %0" : "=r"(dword) : "r"(address) : "memory");
++        value = dword;
++        break;
++    }
++    default:
++        __asm__ volatile("movq (%1), %0" : "=r"(value) : "r"(address) : "memory");
++        break;
++    }
++
++    return value;
++}
++
++static void nommu_swmmu_native_store(void *address, size_t size,
++                                     uint64_t value)
++{
++    switch (size) {
++    case 1: {
++        uint8_t byte = value;
++        __asm__ volatile("movb %1, (%0)" :: "r"(address), "q"(byte) : "memory");
++        break;
++    }
++    case 2: {
++        uint16_t word = value;
++        __asm__ volatile("movw %1, (%0)" :: "r"(address), "r"(word) : "memory");
++        break;
++    }
++    case 4: {
++        uint32_t dword = value;
++        __asm__ volatile("movl %1, (%0)" :: "r"(address), "r"(dword) : "memory");
++        break;
++    }
++    default:
++        __asm__ volatile("movq %1, (%0)" :: "r"(address), "r"(value) : "memory");
++        break;
++    }
++}
++
+ uint64_t nommu_swmmu_load_dynamic(const void *address, size_t size)
+ {
++    return nommu_swmmu_load_return_value(address, size);
++}
++
++uint64_t nommu_swmmu_load_return_value(const void *address, size_t size)
++{
++    if (nommu_swmmu_native_range((uintptr_t)address, size))
++        return nommu_swmmu_native_load(address, size);
++#if defined(__x86_64__)
++	register unsigned long syscall_nr __asm__("rax") =
++		SYS_nommu_swmmu_load;
++	register unsigned long flags __asm__("r10") =
++		NOMMU_SWMMU_ACCESS_SIGNAL |
++		NOMMU_SWMMU_ACCESS_DYNAMIC |
++		NOMMU_SWMMU_ACCESS_RETURN_VALUE;
++
++	__asm__ volatile("syscall"
++			 : "+a"(syscall_nr)
++			 : "D"((unsigned long)address), "S"((unsigned long)size),
++			   "d"(0UL), "r"(flags)
++			 : "rcx", "r11", "memory");
++
++	return syscall_nr;
++#else
+ 	uint64_t result;
+ 	long ret;
+ 
+-	ret = syscall(SYS_nommu_swmmu_load,
+-		      (uintptr_t)address,
+-		      size,
++	ret = syscall(SYS_nommu_swmmu_load, (uintptr_t)address, size,
+ 		      &result,
+ 		      NOMMU_SWMMU_ACCESS_DYNAMIC |
+ 		      NOMMU_SWMMU_ACCESS_SIGNAL);
+@@ -177,11 +315,18 @@
+ 		abort();
+ 
+ 	return result;
++#endif
+ }
+ 
+ long nommu_swmmu_store_dynamic(void *address, size_t size, uint64_t value)
+ {
+ 	long ret;
++	uintptr_t addr = (uintptr_t)address;
++
++	if (nommu_swmmu_native_range(addr, size)) {
++		nommu_swmmu_native_store(address, size, value);
++		return 0;
++	}
+ 
+ 	ret = syscall(SYS_nommu_swmmu_store,
+ 		      (uintptr_t)address,
+@@ -228,75 +373,181 @@
+ 	return ret < 0 ? -errno : 0;
+ }
+ 
++static size_t nommu_swmmu_chunk_size(uintptr_t address, size_t remaining)
++{
++    size_t chunk = remaining;
++    size_t page_remaining = 4096 - (address & 4095);
++
++    if (chunk > page_remaining)
++        chunk = page_remaining;
++    if (chunk > 8)
++        chunk = 8;
++    if (chunk >= 8)
++        return 8;
++    if (chunk >= 4)
++        return 4;
++    if (chunk >= 2)
++        return 2;
++    return chunk;
++}
++
++static size_t nommu_swmmu_chunk_pair(uintptr_t first, uintptr_t second,
++                                      size_t remaining)
++{
++    size_t chunk = remaining;
++    size_t first_page = 4096 - (first & 4095);
++    size_t second_page = 4096 - (second & 4095);
++
++    if (chunk > first_page)
++        chunk = first_page;
++    if (chunk > second_page)
++        chunk = second_page;
++    if (chunk > 8)
++        chunk = 8;
++    if (chunk >= 8)
++        return 8;
++    if (chunk >= 4)
++        return 4;
++    if (chunk >= 2)
++        return 2;
++    return chunk;
++}
++
++static size_t nommu_swmmu_chunk_back(uintptr_t src_end, uintptr_t dst_end,
++                                     size_t remaining)
++{
++    size_t chunk = remaining;
++    size_t src_page = ((src_end - 1) & 4095) + 1;
++    size_t dst_page = ((dst_end - 1) & 4095) + 1;
++
++    if (chunk > 8)
++        chunk = 8;
++    if (chunk > src_page)
++        chunk = src_page;
++    if (chunk > dst_page)
++        chunk = dst_page;
++    if (chunk >= 8)
++        return 8;
++    if (chunk >= 4)
++        return 4;
++    if (chunk >= 2)
++        return 2;
++    return chunk;
++}
++
+ void *nommu_swmmu_memcpy_dynamic(void *destination,
+-				 const void *source,
+-				 size_t size)
+-{
+-	unsigned char *dst = destination;
+-	const unsigned char *src = source;
+-	void *result = destination;
+-
+-	while (size--) {
+-		uint64_t value;
+-
+-		value = nommu_swmmu_load_dynamic(src, 1);
+-		nommu_swmmu_store_dynamic(dst, 1, value);
+-
+-		src++;
+-		dst++;
+-	}
+-
+-	return result;
++                                 const void *source,
++                                 size_t size)
++{
++    uintptr_t dst = (uintptr_t)destination;
++    uintptr_t src = (uintptr_t)source;
++    void *result = destination;
++
++    if (!size) return result;
++    if (nommu_swmmu_direct_span(src, size) && nommu_swmmu_direct_span(dst, size)) {
++        size_t count = size;
++        __asm__ volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(count) : : "memory");
++        return result;
++    }
++
++    while (size) {
++        uint64_t value;
++        size_t chunk = nommu_swmmu_chunk_pair(src, dst, size);
++        value = nommu_swmmu_load_dynamic((const void *)src, chunk);
++        nommu_swmmu_store_dynamic((void *)dst, chunk, value);
++
++        src += chunk;
++        dst += chunk;
++        size -= chunk;
++    }
++
++    return result;
+ }
+ 
+ void *nommu_swmmu_memset_dynamic(void *destination,
+-				 int value,
+-				 size_t size)
+-{
+-	unsigned char *pointer = destination;
+-	void *result = destination;
+-
+-	while (size--)
+-		nommu_swmmu_store_dynamic(pointer++, 1,
+-					  (unsigned char)value);
+-
+-	return result;
++                                 int value,
++                                 size_t size)
++{
++    uintptr_t dst = (uintptr_t)destination;
++    void *result = destination;
++    uint64_t pattern = (uint64_t)(unsigned char)value * 0x0101010101010101ULL;
++
++    if (!size) return result;
++    if (nommu_swmmu_direct_span(dst, size)) {
++        size_t count = size;
++        __asm__ volatile("rep stosb" : "+D"(dst), "+c"(count) : "a"((unsigned char)value) : "memory");
++        return result;
++    }
++
++    while (size) {
++        size_t chunk = nommu_swmmu_chunk_size(dst, size);
++
++        nommu_swmmu_store_dynamic((void *)dst, chunk, pattern);
++        dst += chunk;
++        size -= chunk;
++    }
++
++    return result;
+ }
+ 
+ void *nommu_swmmu_memmove_dynamic(void *destination,
+-				  const void *source,
+-				  size_t size)
+-{
+-	uintptr_t dst_addr = (uintptr_t)destination;
+-	uintptr_t src_addr = (uintptr_t)source;
+-	size_t i;
+-
+-	if (!size || dst_addr == src_addr)
+-		return destination;
+-
+-	if (dst_addr < src_addr ||
+-	    dst_addr - src_addr >= size) {
+-		for (i = 0; i < size; i++) {
+-			uint64_t value;
+-
+-			value = nommu_swmmu_load_dynamic(
+-				(const void *)(src_addr + i), 1);
+-			nommu_swmmu_store_dynamic(
+-				(void *)(dst_addr + i), 1, value);
+-		}
+-	} else {
+-		for (i = size; i > 0; i--) {
+-			size_t offset = i - 1;
+-			uint64_t value;
+-
+-			value = nommu_swmmu_load_dynamic(
+-				(const void *)(src_addr + offset), 1);
+-			nommu_swmmu_store_dynamic(
+-				(void *)(dst_addr + offset), 1, value);
+-		}
+-	}
+-
+-	return destination;
++                                  const void *source,
++                                  size_t size)
++{
++    uintptr_t dst_addr = (uintptr_t)destination;
++    uintptr_t src_addr = (uintptr_t)source;
++
++    if (!size || dst_addr == src_addr)
++        return destination;
++
++    if (nommu_swmmu_direct_span(src_addr, size) && nommu_swmmu_direct_span(dst_addr, size)) {
++        if (dst_addr < src_addr || dst_addr - src_addr >= size) {
++            size_t count = size;
++            __asm__ volatile("rep movsb" : "+D"(dst_addr), "+S"(src_addr), "+c"(count) : : "memory");
++        } else {
++            size_t remaining = size;
++            while (remaining) {
++                size_t chunk = nommu_swmmu_chunk_back(src_addr + remaining, dst_addr + remaining, remaining);
++                uint64_t v = nommu_swmmu_native_load((void *)(src_addr + remaining - chunk), chunk);
++                nommu_swmmu_native_store((void *)(dst_addr + remaining - chunk), chunk, v);
++                remaining -= chunk;
++            }
++        }
++        return destination;
++    }
++
++    if (dst_addr < src_addr || dst_addr - src_addr >= size) {
++        uintptr_t src = src_addr;
++        uintptr_t dst = dst_addr;
++        size_t remaining = size;
++
++        while (remaining) {
++            uint64_t value;
++            size_t chunk = nommu_swmmu_chunk_pair(src, dst, remaining);
++            value = nommu_swmmu_load_dynamic((const void *)src, chunk);
++            nommu_swmmu_store_dynamic((void *)dst, chunk, value);
++            src += chunk;
++            dst += chunk;
++            remaining -= chunk;
++        }
++    } else {
++        size_t remaining = size;
++
++        while (remaining) {
++            uintptr_t src_end = src_addr + remaining;
++            uintptr_t dst_end = dst_addr + remaining;
++            size_t chunk = nommu_swmmu_chunk_back(src_end, dst_end,
++                                                  remaining);
++            uint64_t value = nommu_swmmu_load_dynamic(
++                (const void *)(src_end - chunk), chunk);
++
++            nommu_swmmu_store_dynamic((void *)(dst_end - chunk), chunk,
++                                      value);
++            remaining -= chunk;
++        }
++    }
++
++    return destination;
+ }
+ 
+ static int nommu_swmmu_native_cmpxchg_u32(void *address, uint32_t expected,
+@@ -323,6 +574,7 @@
+ 			uint32_t desired, uint32_t *observed)
+ {
+ 	long ret;
++	int saved_errno = errno;
+ 
+ 	if (!observed)
+ 		return -EINVAL;
+@@ -338,9 +590,14 @@
+ 	if (ret >= 0)
+ 		return 0;
+ 
+-	if (errno == EOPNOTSUPP)
+-		return nommu_swmmu_native_cmpxchg_u32(
++	if (errno == EOPNOTSUPP) {
++		int fallback = nommu_swmmu_native_cmpxchg_u32(
+ 			address, expected, desired, observed);
++
++		if (!fallback)
++			errno = saved_errno;
++		return fallback;
++	}
+ 
+ 	return -errno;
+ }
+@@ -373,9 +630,6 @@
+ 	old = nommu_swmmu_load_dynamic(address, storage_size);
+ 	mask = width == 64 ? ~0ULL : (1ULL << width) - 1;
+ 	field_mask = mask << shift;
+-	updated = (old & ~field_mask) |
+-		((value & mask) << shift);
+-
+-	return nommu_swmmu_store_dynamic(
+-		address, storage_size, updated);
+-}
++	updated = (old & ~field_mask) | ((value & mask) << shift);
++	return nommu_swmmu_store_dynamic(address, storage_size, updated);
++}
+--- a/src/include/swmmu_runtime.h
++++ b/src/include/swmmu_runtime.h
+@@ -11,6 +11,7 @@
+ long nommu_swmmu_store_u64(void *, size_t, uint64_t);
+ 
+ uint64_t nommu_swmmu_load_dynamic(const void *, size_t);
++uint64_t nommu_swmmu_load_return_value(const void *, size_t);
+ long nommu_swmmu_store_dynamic(void *, size_t, uint64_t);
+ 
+ uint64_t nommu_swmmu_bitfield_load_dynamic(const void *, size_t,
+--- a/src/include/swmmu_plugin_runtime.h
++++ b/src/include/swmmu_plugin_runtime.h
+@@ -16,6 +16,10 @@
+ static uint64_t (* const __attribute__((used))
+ swmmu_keep_load_dynamic)(const void *, size_t) =
+ 	nommu_swmmu_load_dynamic;
++
++static uint64_t (* const __attribute__((used))
++swmmu_keep_load_return_value)(const void *, size_t) =
++	nommu_swmmu_load_return_value;
+ 
+ static long (* const __attribute__((used))
+ swmmu_keep_store_dynamic)(void *, size_t, uint64_t) =
+--- a/Makefile
++++ b/Makefile
+@@ -114,6 +114,7 @@
+ obj/crt/rcrt1.o: $(srcdir)/ldso/dlstart.c
+ 
+ obj/crt/Scrt1.o obj/crt/rcrt1.o: CFLAGS_ALL += -fPIC
++obj/crt/rcrt1.o: CFLAGS_ALL += -DSWMMU_STATIC_PIE_CRT=1
+ 
+ OPTIMIZE_SRCS = $(wildcard $(OPTIMIZE_GLOBS:%=$(srcdir)/src/%))
+ $(OPTIMIZE_SRCS:$(srcdir)/%.c=obj/%.o) $(OPTIMIZE_SRCS:$(srcdir)/%.c=obj/%.lo): CFLAGS += -O3

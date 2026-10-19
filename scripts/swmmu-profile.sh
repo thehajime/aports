@@ -31,6 +31,17 @@ swmmu_musl_flags() {
 	SWMMU_CFLAGS="-DDL_NOMMU_SUPPORT=1 -DSWMMU_ALL_ACCESS=1 -fplugin=$SWMMU_PLUGIN -fplugin-arg-swmmu_plugin-all-access=1"
 	SWMMU_RUNTIME_CFLAGS="-include $builddir/src/include/swmmu_plugin_runtime.h"
 	SWMMU_CPPFLAGS="-idirafter $SWMMU_UAPI"
+	case "${SWMMU_DIRECT_WINDOW:-0}" in
+	0) ;;
+	1)
+		[ -r "$builddir/src/include/swmmu_direct_window_guard.h" ] || {
+			error "Missing direct-window runtime header"; return 1;
+		}
+		SWMMU_CFLAGS="$SWMMU_CFLAGS -DSWMMU_BUILDING_LIBC=1 -fplugin-arg-swmmu_plugin-direct-window=1"
+		SWMMU_RUNTIME_CFLAGS="$SWMMU_RUNTIME_CFLAGS -include $builddir/src/include/swmmu_direct_window_guard.h"
+		;;
+	*) error "SWMMU_DIRECT_WINDOW must be 0 or 1"; return 1;;
+	esac
 }
 
 swmmu_guest_profile() {
@@ -44,7 +55,7 @@ swmmu_guest_profile() {
 	esac
 	local name
 	for name in include/stdio.h include/swmmu_plugin_runtime.h include/swmmu_runtime.h \
-		lib/Scrt1.o lib/crt1.o lib/crti.o lib/crtn.o lib/libc.a lib/libssp_nonshared.a; do
+		lib/Scrt1.o lib/crt1.o lib/rcrt1.o lib/crti.o lib/crtn.o lib/libc.a lib/libssp_nonshared.a; do
 		[ -r "$SWMMU_SYSROOT/usr/$name" ] || {
 			error "Missing instrumented sysroot file: usr/$name"; return 1;
 		}
@@ -76,13 +87,13 @@ swmmu_guest_profile() {
 	libgcc.a%s %:if-exists(libgcc_eh.a%s)
 
 	*startfile:
-	%{!shared:%{static:$SWMMU_SYSROOT/usr/lib/crt1.o;:$SWMMU_SYSROOT/usr/lib/Scrt1.o}} $SWMMU_SYSROOT/usr/lib/crti.o %{static:crtbeginT.o%s;:crtbeginS.o%s}
+	%{!shared:%{static-pie:$SWMMU_SYSROOT/usr/lib/rcrt1.o;static:$SWMMU_SYSROOT/usr/lib/crt1.o;:$SWMMU_SYSROOT/usr/lib/Scrt1.o}} $SWMMU_SYSROOT/usr/lib/crti.o %{static:crtbeginT.o%s;:crtbeginS.o%s}
 
 	*endfile:
 	%{static:crtend.o%s;:crtendS.o%s} $SWMMU_SYSROOT/usr/lib/crtn.o
 
 	*link:
-	%(swmmu_link) -nostdlib -dynamic-linker /lib/ld-musl-x86_64.so.1
+	%(swmmu_link) -nostdlib %{!static:%{!static-pie:-dynamic-linker /lib/ld-musl-x86_64.so.1}}
 
 	EOF
 	local real_cc="${CC:-${CROSS_COMPILE}gcc}"
@@ -93,6 +104,14 @@ swmmu_guest_profile() {
 	export SWMMU_REAL_CC="$real_cc"
 	export SWMMU_SPECS="$srcdir/swmmu.specs" SWMMU_PLUGIN SWMMU_UAPI SWMMU_SYSROOT
 	export SWMMU_RUNTIME_HEADER="${SWMMU_RUNTIME_HEADER:-$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h}"
+	export SWMMU_DIRECT_WINDOW="${SWMMU_DIRECT_WINDOW:-0}"
+	case "$SWMMU_DIRECT_WINDOW" in
+	0) ;;
+	1) [ -r "$SWMMU_SYSROOT/usr/include/swmmu_direct_window_guard.h" ] || {
+		error "Missing direct-window sysroot header"; return 1;
+	};;
+	*) error "SWMMU_DIRECT_WINDOW must be 0 or 1"; return 1;;
+	esac
 	install -m755 "$wrapper_source" "$srcdir/swmmu-cc"
 	export CC="$srcdir/swmmu-cc"
 }
@@ -107,6 +126,8 @@ swmmu_stage_musl() {
 		"$SWMMU_SYSROOT/usr/include/swmmu_runtime.h" || return 1
 	install -Dm644 "$builddir/src/include/swmmu_plugin_runtime.h" \
 		"$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h" || return 1
+	install -Dm644 "$builddir/src/include/swmmu_direct_window_guard.h" \
+		"$SWMMU_SYSROOT/usr/include/swmmu_direct_window_guard.h" || return 1
 	# libc.so is a relative link to /lib in musl's install layout.
 	# Retain libssp_nonshared for Alpine's normal linker flags as well.
 	install -m644 "$builddir/libssp_nonshared.a" "$SWMMU_SYSROOT/usr/lib/"

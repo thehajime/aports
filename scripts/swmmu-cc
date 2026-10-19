@@ -15,6 +15,18 @@ if [ -n "${CPATH:-}${C_INCLUDE_PATH:-}${CPLUS_INCLUDE_PATH:-}${LIBRARY_PATH:-}" 
 	echo 'Unset host header/library search environment variables for SWMMU builds' >&2
 	exit 1
 fi
+case "${SWMMU_DIRECT_WINDOW:-0}" in
+0) ;;
+1)
+	window_header=$SWMMU_SYSROOT/usr/include/swmmu_direct_window_guard.h
+	[ -r "$window_header" ] || {
+		echo 'Missing matching direct-window runtime header' >&2; exit 1;
+	}
+	set -- -include "$window_header" \
+		-fplugin-arg-swmmu_plugin-direct-window=1 "$@"
+	;;
+*) echo 'SWMMU_DIRECT_WINDOW must be 0 or 1' >&2; exit 1;;
+esac
 exec "$SWMMU_REAL_CC" "-specs=$SWMMU_SPECS" \
 	-include "$SWMMU_RUNTIME_HEADER" \
 	-DSWMMU_ALL_ACCESS=1 \
