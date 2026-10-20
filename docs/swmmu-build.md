@@ -65,13 +65,23 @@ SWMMU=1 SWMMU_ONLY=1 abuild -r
 cd "$APORTS/main/coreutils"
 SWMMU=1 SWMMU_ONLY=1 abuild -r
 
+cd "$APORTS/main/zlib"
+SWMMU=1 SWMMU_ONLY=1 abuild -r
+
+cd "$APORTS/main/apk-tools"
+SWMMU=1 SWMMU_ONLY=1 abuild -r
+
 cd "$APORTS/main/python3"
 SWMMU=1 SWMMU_ONLY=1 abuild -r
 ```
 
 `SWMMU_ONLY=1` builds only the opt-in x86_64 guest package and avoids the
 ordinary multi-architecture package variants. Install `musl-nommu`,
-`libcrypto3`, `libssl3`, `nginx-nommu`, and `coreutils-nommu` into the guest rootfs.
+`libcrypto3`, `libssl3`, `zlib-nommu`, `nginx-nommu`, `coreutils-nommu`, and
+`apk-tools-nommu` into the guest rootfs. The SWMMU zlib build stages its
+headers, shared library, and pkg-config metadata for apk-tools. The apk-tools
+guest build disables Lua, Python, docs, tests, and the static executable; it
+provides the dynamic `/sbin/apk` and `libapk` runtime.
 The coreutils recipe builds its commands separately from the normal Alpine
 package and disables optional ACL, xattr, OpenSSL, and LTO support while the
 SWMMU profile expands. Its I/O buffer is reduced from 256 KiB to 4 KiB for the

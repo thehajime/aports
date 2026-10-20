@@ -1,7 +1,7 @@
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=apk-tools
 pkgver=3.0.8
-pkgrel=0
+pkgrel=1
 pkgdesc="Alpine Package Keeper - package manager for alpine"
 arch="all"
 url="https://gitlab.alpinelinux.org/alpine/apk-tools"
@@ -41,10 +41,27 @@ fi
 source="https://gitlab.alpinelinux.org/alpine/apk-tools/-/archive/v$pkgver/apk-tools-v$pkgver.tar.gz
 	repo-hash-sha1.patch
 	"
+
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="$pkgname-nommu"
+	pkgdesc="Alpine Package Keeper built for the SWMMU NOMMU guest"
+	arch="x86_64"
+	subpackages=""
+	depends="musl-nommu libcrypto3 libssl3 zlib-nommu ca-certificates-bundle"
+	makedepends_build="meson lua$_lua"
+	makedepends_host="linux-headers openssl-dev zlib-dev"
+	makedepends=""
+	install=
+fi
 builddir="$srcdir/apk-tools-v$pkgver"
 
 provides="apk-tools3=$pkgver-r$pkgrel"
 replaces="apk-tools3"
+
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	provides="apk-tools=$pkgver-r$pkgrel apk-tools3=$pkgver-r$pkgrel"
+	replaces="apk-tools apk-tools3"
+fi
 
 # secfixes:
 #   2.12.6-r0:
@@ -54,6 +71,45 @@ replaces="apk-tools3"
 
 build() {
 	export VERSION=$pkgver-r$pkgrel
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		export CFLAGS="$CFLAGS -fno-lto"
+		export CXXFLAGS="$CXXFLAGS -fno-lto"
+		export PKG_CONFIG_LIBDIR="$SWMMU_SYSROOT/usr/lib/pkgconfig:$SWMMU_SYSROOT/usr/share/pkgconfig"
+		export PKG_CONFIG_SYSROOT_DIR="$SWMMU_SYSROOT"
+		cat > "$srcdir/swmmu-cross.ini" <<-EOF
+		[binaries]
+		c = '$CC'
+		ar = 'ar'
+		strip = 'strip'
+		pkg-config = 'pkg-config'
+
+		[properties]
+		needs_exe_wrapper = true
+
+		[host_machine]
+		system = 'linux'
+		cpu_family = 'x86_64'
+		cpu = 'x86_64'
+		endian = 'little'
+		EOF
+		abuild-meson \
+			--cross-file="$srcdir/swmmu-cross.ini" \
+			--auto-features=disabled \
+			--bindir=/sbin \
+			-Darch="$CARCH" \
+			-Ddocs=disabled \
+			-Dhelp=enabled \
+			-Dzstd=disabled \
+			-Dlua_version=$_lua \
+			-Dlua=disabled \
+			-Dpython=disabled \
+			-Dtests=disabled \
+			output
+		ninja -C output
+		return
+	fi
 
 	abuild-meson \
 		--auto-features=disabled \
@@ -80,6 +136,11 @@ build() {
 }
 
 check() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		# The target needs the UML SWMMU syscall ABI. Exercise the packaged
+		# binary in the guest instead of running it as an Alpine host tool.
+		return 0
+	fi
 	meson test --print-errorlogs -C output
 }
 
@@ -90,6 +151,11 @@ package() {
 		"$pkgdir"/etc/apk/keys \
 		"$pkgdir"/etc/apk/protected_paths.d \
 		"$pkgdir"/var/cache/apk
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		rm -rf "$pkgdir"/usr/include "$pkgdir"/usr/lib/pkgconfig \
+			"$pkgdir"/usr/share
+		rm -f "$pkgdir"/usr/lib/libapk.so
+	fi
 }
 
 libapk() {
