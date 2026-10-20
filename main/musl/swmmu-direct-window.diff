@@ -14,6 +14,8 @@
 +extern uintptr_t nommu_swmmu_direct_end __attribute__((alias("__nommu_swmmu_direct_end")));
 +uintptr_t __nommu_swmmu_direct_key __attribute__((visibility("hidden"))) = UINTPTR_MAX;
 +extern uintptr_t nommu_swmmu_direct_key __attribute__((alias("__nommu_swmmu_direct_key")));
++uintptr_t __nommu_swmmu_direct_length __attribute__((visibility("hidden")));
++extern uintptr_t nommu_swmmu_direct_length __attribute__((alias("__nommu_swmmu_direct_length")));
 +static int nommu_swmmu_direct_ready;
 +
 +static inline __attribute__((always_inline)) int nommu_swmmu_direct_span(uintptr_t address, size_t size)
@@ -39,6 +41,8 @@
 +        if ((long)nr == 0 && bounds[0] < bounds[1]) {
 +            __atomic_store_n(&__nommu_swmmu_direct_start, bounds[0], __ATOMIC_RELAXED);
 +            __atomic_store_n(&__nommu_swmmu_direct_end, bounds[1], __ATOMIC_RELEASE);
++            __atomic_store_n(&__nommu_swmmu_direct_length,
++                             bounds[1] - bounds[0], __ATOMIC_RELEASE);
 +            /* Select an aligned power-of-two subset of the queried window.
 +             * A page-contained scalar access cannot cross its aligned end.
 +             * UINTPTR_MAX is the initial key and matches no 64-bit address.
