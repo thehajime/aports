@@ -47,7 +47,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	pkgdesc="Alpine Package Keeper built for the SWMMU NOMMU guest"
 	arch="x86_64"
 	subpackages=""
-	depends="musl-nommu libcrypto3 libssl3 zlib-nommu ca-certificates-bundle"
+	depends=""
 	makedepends_build="meson lua$_lua"
 	makedepends_host="linux-headers openssl-dev zlib-dev"
 	makedepends=""
@@ -152,6 +152,7 @@ package() {
 		"$pkgdir"/etc/apk/protected_paths.d \
 		"$pkgdir"/var/cache/apk
 	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		depends="musl-nommu libcrypto3 libssl3 zlib-nommu ca-certificates-bundle"
 		rm -rf "$pkgdir"/usr/include "$pkgdir"/usr/lib/pkgconfig \
 			"$pkgdir"/usr/share
 		rm -f "$pkgdir"/usr/lib/libapk.so

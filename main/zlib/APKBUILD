@@ -16,7 +16,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	pkgdesc="zlib built for the SWMMU NOMMU guest"
 	arch="x86_64"
 	subpackages=""
-	depends="musl-nommu"
+	depends=""
 	provides="zlib=$pkgver-r$pkgrel"
 	replaces="zlib"
 	builddir="$srcdir/zlib-$pkgver"
@@ -71,6 +71,7 @@ check() {
 package() {
 	make install DESTDIR="$pkgdir"
 	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		depends="musl-nommu"
 		make install DESTDIR="$SWMMU_SYSROOT"
 		install -d "$SWMMU_SYSROOT/usr/lib/pkgconfig"
 		cat > "$SWMMU_SYSROOT/usr/lib/pkgconfig/zlib.pc" <<-EOF
