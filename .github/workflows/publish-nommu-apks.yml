@@ -34,6 +34,8 @@ jobs:
             main/musl
             main/openssl
             main/python3
+            main/nginx
+            main/coreutils
             scripts/swmmu-profile.sh
             scripts/swmmu-cc
             scripts/swmmu-prepare.sh
@@ -79,7 +81,7 @@ jobs:
           aports_commit=$APORTS_SHA
           profiles=nommu-plain,nommu-swmmu
           alpine_base=edge
-          swmmu_packages=libcrypto3,libssl3,python3-nommu
+          swmmu_packages=libcrypto3,libssl3,coreutils-nommu,nginx-nommu,python3-nommu
           EOF
           tar -czf "$RUNNER_TEMP/nommu-apks.tar.gz" -C "$RUNNER_TEMP/nommu-apks" .
       - name: Publish prerelease assets
