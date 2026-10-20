@@ -1,6 +1,6 @@
 --- a/src/misc/nommu_swmmu.c
 +++ b/src/misc/nommu_swmmu.c
-@@ -162,14 +162,156 @@
+@@ -162,14 +162,152 @@
  	return dst;
  }
  
@@ -14,8 +14,6 @@
 +extern uintptr_t nommu_swmmu_direct_end __attribute__((alias("__nommu_swmmu_direct_end")));
 +uintptr_t __nommu_swmmu_direct_key __attribute__((visibility("hidden"))) = UINTPTR_MAX;
 +extern uintptr_t nommu_swmmu_direct_key __attribute__((alias("__nommu_swmmu_direct_key")));
-+uintptr_t __nommu_swmmu_direct_length __attribute__((visibility("hidden")));
-+extern uintptr_t nommu_swmmu_direct_length __attribute__((alias("__nommu_swmmu_direct_length")));
 +static int nommu_swmmu_direct_ready;
 +
 +static inline __attribute__((always_inline)) int nommu_swmmu_direct_span(uintptr_t address, size_t size)
@@ -41,8 +39,6 @@
 +        if ((long)nr == 0 && bounds[0] < bounds[1]) {
 +            __atomic_store_n(&__nommu_swmmu_direct_start, bounds[0], __ATOMIC_RELAXED);
 +            __atomic_store_n(&__nommu_swmmu_direct_end, bounds[1], __ATOMIC_RELEASE);
-+            __atomic_store_n(&__nommu_swmmu_direct_length,
-+                             bounds[1] - bounds[0], __ATOMIC_RELEASE);
 +            /* Select an aligned power-of-two subset of the queried window.
 +             * A page-contained scalar access cannot cross its aligned end.
 +             * UINTPTR_MAX is the initial key and matches no 64-bit address.
@@ -160,7 +156,7 @@
  		      &result,
  		      NOMMU_SWMMU_ACCESS_DYNAMIC |
  		      NOMMU_SWMMU_ACCESS_SIGNAL);
-@@ -177,11 +319,18 @@
+@@ -177,11 +315,18 @@
  		abort();
  
  	return result;
@@ -179,7 +175,7 @@
  
  	ret = syscall(SYS_nommu_swmmu_store,
  		      (uintptr_t)address,
-@@ -228,75 +377,181 @@
+@@ -228,75 +373,181 @@
  	return ret < 0 ? -errno : 0;
  }
  
@@ -423,7 +419,7 @@
  }
  
  static int nommu_swmmu_native_cmpxchg_u32(void *address, uint32_t expected,
-@@ -323,6 +578,7 @@
+@@ -323,6 +574,7 @@
  			uint32_t desired, uint32_t *observed)
  {
  	long ret;
@@ -431,7 +427,7 @@
  
  	if (!observed)
  		return -EINVAL;
-@@ -338,9 +594,14 @@
+@@ -338,9 +590,14 @@
  	if (ret >= 0)
  		return 0;
  
@@ -448,7 +444,7 @@
  
  	return -errno;
  }
-@@ -373,9 +634,6 @@
+@@ -373,9 +630,6 @@
  	old = nommu_swmmu_load_dynamic(address, storage_size);
  	mask = width == 64 ? ~0ULL : (1ULL << width) - 1;
  	field_mask = mask << shift;
