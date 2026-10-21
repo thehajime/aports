@@ -1,4 +1,4 @@
-name: Publish temporary UML NOMMU APK profiles
+name: Publish UML NOMMU APK profiles
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         description: Pinned master/edge aports source revision for the NOMMU package profiles
         required: true
         type: string
-        default: 2fa7f100befb14cb343a659446e539237c66366c
+        default: nommu-uml-master-swmmu
 
 permissions:
   contents: read
@@ -36,6 +36,8 @@ jobs:
             main/python3
             main/nginx
             main/coreutils
+            main/zlib
+            main/apk-tools
             scripts/swmmu-profile.sh
             scripts/swmmu-cc
             scripts/swmmu-prepare.sh
@@ -81,7 +83,7 @@ jobs:
           aports_commit=$APORTS_SHA
           profiles=nommu-plain,nommu-swmmu
           alpine_base=edge
-          swmmu_packages=libcrypto3,libssl3,coreutils-nommu,nginx-nommu,python3-nommu
+          swmmu_packages=libcrypto3,libssl3,zlib-nommu,apk-tools-nommu,coreutils-nommu,nginx-nommu,python3-nommu
           EOF
           tar -czf "$RUNNER_TEMP/nommu-apks.tar.gz" -C "$RUNNER_TEMP/nommu-apks" .
       - name: Publish prerelease assets
@@ -89,7 +91,7 @@ jobs:
         with:
           tag_name: ci-nommu-${{ steps.source-revisions.outputs.kernel_sha }}-${{ steps.source-revisions.outputs.aports_sha }}
           target_commitish: master
-          name: Temporary NOMMU APKs for kernel ${{ steps.source-revisions.outputs.kernel_sha }}
+          name: UML NOMMU APKs for kernel ${{ steps.source-revisions.outputs.kernel_sha }}
           body_path: ${{ runner.temp }}/nommu-apks/manifest.txt
           prerelease: true
           make_latest: false
