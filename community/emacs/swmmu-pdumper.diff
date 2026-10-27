@@ -1,0 +1,23 @@
+--- a/src/pdumper.c
++++ b/src/pdumper.c
+@@ -5029,9 +5029,17 @@
+     }
+ 
+   if (VM_SUPPORTED)
+-    return dump_mmap_contiguous_vm (maps, nr_maps, total_size);
+-  else
+-    return dump_mmap_contiguous_heap (maps, nr_maps, total_size);
++    {
++      if (dump_mmap_contiguous_vm (maps, nr_maps, total_size))
++        return true;
++      /* NOMMU can reserve memory yet reject MAP_FIXED with EINVAL.
++         The VM attempt has released and reset every mapping, so use
++         the existing portable heap reader for unsupported layouts.
++         Preserve real allocation/resource failures such as ENOMEM.  */
++      if (errno != EINVAL && errno != ENOSYS && errno != ENOTSUP)
++        return false;
++    }
++  return dump_mmap_contiguous_heap (maps, nr_maps, total_size);
+ }
+ 
+ typedef uint_fast32_t dump_bitset_word;
