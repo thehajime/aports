@@ -25,6 +25,10 @@ source="https://ftp.gnu.org/gnu/coreutils/coreutils-$pkgver.tar.xz
 	coreutils-9.10-dash-tests.patch
 	"
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgrel=3
+fi
+
 # secfixes:
 #   9.4-r2:
 #     - CVE-2024-0684
@@ -47,6 +51,8 @@ build() {
 		utils_cv_avx512_pclmul_intrinsic_exists=no \
 		utils_cv_avx2_intrinsic_exists=no \
 		utils_cv_avx512_intrinsic_exists=no \
+		ac_cv_header_sys_capability_h=no \
+		ac_cv_lib_cap_cap_get_file=no \
 		CC="${SWMMU_CONFIGURE_CC:-gcc}" \
 		CFLAGS="$CFLAGS -fno-lto -fno-stack-clash-protection" \
 		CONFIG_SHELL=/bin/bash \
