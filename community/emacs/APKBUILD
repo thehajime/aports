@@ -56,6 +56,62 @@ source="
 	"
 options="!check" # how do you test a text editor without editing text?
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="emacs-nommu"
+	pkgrel=1
+	pkgdesc="$_pkgdesc (SWMMU terminal and batch)"
+	arch="x86_64"
+	builddir="$srcdir/emacs-$pkgver"
+	subpackages=""
+	depends="musl-nommu ncurses-nommu"
+	makedepends="autoconf automake gawk ncurses-dev texinfo"
+	options="$options !tracedeps"
+fi
+
+_swmmu_configure() {
+	"$builddir/configure" --prefix=/usr --sysconfdir=/etc \
+		--libexecdir=/usr/lib --localstatedir=/var --without-all \
+		--without-libgmp --without-native-compilation \
+		--without-compress-install --with-dumping=pdumper "$@"
+}
+
+_swmmu_build() {
+	local native_cc="${CC:-gcc}"
+	mkdir -p "$builddir/host-tools" "$builddir/guest-build"
+	cd "$builddir/host-tools"
+	CC="$native_cc" _swmmu_configure || return 1
+	make -C lib || return 1
+	make -C lib-src make-docfile make-fingerprint || return 1
+	cd "$builddir/guest-build"
+	# Configure probes are native; only the target objects use SWMMU.
+	CC="$native_cc" _swmmu_configure || return 1
+	# The portable dump is generated after installation, inside the guest.
+	make epaths-force buildlisppath="/usr/share/emacs/$pkgver/lisp" || return 1
+	. "$startdir/../../scripts/swmmu-profile.sh"
+	swmmu_guest_profile || return 1
+	# Gnulib replacement headers require the package configuration first.
+	cat > "$srcdir/emacs-swmmu-runtime.h" <<-EOF
+	#include "$builddir/guest-build/src/config.h"
+	#include "$SWMMU_SYSROOT/usr/include/swmmu_plugin_runtime.h"
+	EOF
+	export SWMMU_RUNTIME_HEADER="$srcdir/emacs-swmmu-runtime.h"
+	make -C lib CC="$CC" || return 1
+	make -C src CC="$CC" libsrc="$builddir/host-tools/lib-src" \
+		hostlib="$builddir/host-tools/lib" temacs ../etc/DOC || return 1
+	# Never run instrumented temacs on the host. Dump in the UML guest.
+}
+
+_swmmu_package() {
+	install -Dm755 "$builddir/guest-build/src/temacs" \
+		"$pkgdir/usr/bin/emacs-$pkgver" || return 1
+	ln -s "emacs-$pkgver" "$pkgdir/usr/bin/emacs" || return 1
+	mkdir -p "$pkgdir/usr/share/emacs/$pkgver"
+	cp -a "$builddir/lisp" "$builddir/etc" \
+		"$pkgdir/usr/share/emacs/$pkgver/" || return 1
+	install -Dm644 "$builddir/guest-build/etc/DOC" \
+		"$pkgdir/usr/share/emacs/$pkgver/etc/DOC" || return 1
+}
+
 # secfixes:
 #   28.2-r6:
 #     - CVE-2023-27986
@@ -67,6 +123,7 @@ options="!check" # how do you test a text editor without editing text?
 prepare() {
 	default_prepare
 	./autogen.sh
+	[ "${SWMMU_ONLY:-0}" != 1 ] || return 0
 	rm etc/emacs.service # systemd unit
 
 	mkdir -p nox
@@ -169,6 +226,7 @@ _build_nox() {
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then _swmmu_build; return $?; fi
 	_build_nox
 	_build_x11
 	_build_x11_nativecomp
@@ -179,6 +237,7 @@ build() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then _swmmu_package; return $?; fi
 	make DESTDIR="$pkgdir" install -C gtk3
 
 	cd "$pkgdir"
