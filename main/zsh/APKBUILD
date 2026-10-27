@@ -74,6 +74,17 @@ for _i in $_comps; do
 	subpackages="$subpackages ${_i%%:*}-zsh-completion:_completion:noarch"
 done
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="zsh-nommu"
+	pkgdesc="$pkgdesc (SWMMU instrumented)"
+	arch="x86_64"
+	builddir="$srcdir/zsh-$pkgver"
+	subpackages="$pkgname-doc"
+	install=""
+	depends="musl-nommu ncurses-nommu pcre-nommu libcap-nommu"
+	options="$options !check !tracedeps"
+fi
+
 prepare() {
 	default_prepare
 	update_config_sub
@@ -110,6 +121,22 @@ prepare() {
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		local native_cc="${CC:-gcc}"
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local guest_cc="$CC"
+		# Probe with native libraries, then compile every target object/module
+		# against the instrumented sysroot through the shared compiler wrapper.
+		CC="$native_cc" ./configure --prefix=/usr --bindir=/bin \
+			--enable-etcdir=/etc/zsh --enable-pcre --enable-cap \
+			--enable-multibyte --enable-function-subdirs \
+			--enable-fndir=/usr/share/zsh/functions --enable-zsh-secure-free \
+			--sysconfdir=/etc --with-tcsetpgrp || return 1
+		make CC="$guest_cc" DLLD="$guest_cc" \
+			CPPFLAGS="-I$SWMMU_SYSROOT/usr/include/ncursesw" || return 1
+		return 0
+	fi
 	./configure \
 		--build=$CBUILD \
 		--host=$CHOST \
@@ -141,7 +168,15 @@ check() {
 }
 
 package() {
-	make DESTDIR="$pkgdir" install
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		make CC="$CC" DLLD="$CC" \
+			CPPFLAGS="-I$SWMMU_SYSROOT/usr/include/ncursesw" \
+			DESTDIR="$pkgdir" install || return 1
+	else
+		make DESTDIR="$pkgdir" install
+	fi
 
 	install -Dm644 LICENCE "$pkgdir"/usr/share/licenses/$pkgname/LICENCE
 
