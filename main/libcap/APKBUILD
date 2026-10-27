@@ -30,11 +30,31 @@ armv7)
 	;;
 esac
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="libcap-nommu"
+	pkgdesc="$pkgdesc (SWMMU instrumented)"
+	arch="x86_64"
+	builddir="$srcdir/libcap-$pkgver"
+	subpackages=""
+	depends="musl-nommu"
+	options="$options !check !tracedeps"
+fi
+
 # secfixes:
 #   2.78-r0:
 #     - CVE-2026-4878
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		# _makenames is a host generator; compile only the target library.
+		make -C libcap BUILD_CC=gcc CC="$CC" lib=lib prefix=/usr GOLANG=no || return 1
+		mkdir -p "$SWMMU_SYSROOT/usr/lib" "$SWMMU_SYSROOT/usr/include/sys"
+		cp -a libcap/libcap.so* "$SWMMU_SYSROOT/usr/lib/" || return 1
+		install -m644 libcap/include/sys/capability.h "$SWMMU_SYSROOT/usr/include/sys/" || return 1
+		return 0
+	fi
 	make BUILD_CC=gcc CC="${CC:-gcc}" lib=lib prefix=/usr GOLANG=no \
 		DESTDIR="$pkgdir"
 }
@@ -44,6 +64,12 @@ check() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		mkdir -p "$pkgdir/usr/lib" "$pkgdir/usr/include/sys"
+		cp -a libcap/libcap.so* "$pkgdir/usr/lib/" || return 1
+		install -m644 libcap/include/sys/capability.h "$pkgdir/usr/include/sys/" || return 1
+		return 0
+	fi
 	# backwards compatibility for things that depended on 'libcap'
 	depends="libcap2=$pkgver-r$pkgrel $pkgname-utils=$pkgver-r$pkgrel"
 

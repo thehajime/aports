@@ -12,6 +12,16 @@ subpackages="$pkgname-static $pkgname-dev $pkgname-doc $pkgname-tools
 	libpcrecpp libpcre16 libpcre32"
 source="https://downloads.sourceforge.net/project/pcre/pcre/$pkgver/pcre-$pkgver.tar.bz2"
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="pcre-nommu"
+	pkgdesc="$pkgdesc (SWMMU instrumented)"
+	arch="x86_64"
+	builddir="$srcdir/pcre-$pkgver"
+	subpackages=""
+	depends="musl-nommu"
+	options="$options !check !tracedeps"
+fi
+
 # secfixes:
 #   8.44-r0:
 #     - CVE-2020-14155
@@ -36,6 +46,22 @@ prepare() {
 }
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		local native_cc="${CC:-gcc}"
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local guest_cc="$CC"
+		# Native probes only; JIT emits uninstrumented code and stays disabled.
+		CC="$native_cc" ./configure --prefix=/usr --disable-jit \
+			--disable-cpp --enable-utf8 --enable-unicode-properties \
+			--enable-pcre8 --disable-pcre16 --disable-pcre32 \
+			--with-match-limit-recursion=8192 || return 1
+		make CC="$guest_cc" libpcre.la || return 1
+		install -Dm644 pcre.h "$SWMMU_SYSROOT/usr/include/pcre.h" || return 1
+		mkdir -p "$SWMMU_SYSROOT/usr/lib"
+		cp -a .libs/libpcre.so* "$SWMMU_SYSROOT/usr/lib/" || return 1
+		return 0
+	fi
 	local _enable_jit="--enable-jit"
 	case "$CARCH" in
 	s390x) _enable_jit="";;
@@ -61,6 +87,12 @@ build() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		mkdir -p "$pkgdir/usr/lib" "$pkgdir/usr/include"
+		cp -a .libs/libpcre.so* "$pkgdir/usr/lib/" || return 1
+		install -m644 pcre.h "$pkgdir/usr/include/" || return 1
+		return 0
+	fi
 	make DESTDIR="$pkgdir" install
 }
 

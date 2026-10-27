@@ -28,6 +28,15 @@ source="https://invisible-mirror.net/archives/ncurses/current/ncurses-$_pkgver.t
 	"
 builddir="$srcdir/$pkgname-$_pkgver"
 
+if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	pkgname="ncurses-nommu"
+	pkgdesc="Instrumented wide-character terminal libraries for SWMMU"
+	arch="x86_64"
+	subpackages=""
+	depends="musl-nommu"
+	options="$options !tracedeps"
+fi
+
 # secfixes:
 #   6.4_p20230424-r0:
 #     - CVE-2023-29491
@@ -80,6 +89,22 @@ _basic_terms="
 	"
 
 build() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		local native_cc="${CC:-gcc}"
+		. "$startdir/../../scripts/swmmu-profile.sh"
+		swmmu_guest_profile || return 1
+		local guest_cc="$CC"
+		# Configure probes and generator programs run on the build host.
+		CC="$native_cc" ./configure --prefix=/usr --with-shared \
+			--enable-widec --without-normal --without-debug \
+			--without-progs --without-tests --without-ada \
+			--without-cxx-binding --without-cxx --without-manpages \
+			--with-build-cc="$native_cc" --disable-stripping \
+			--with-terminfo-dirs=/etc/terminfo:/usr/share/terminfo || return 1
+		make CC="$guest_cc" BUILD_CC="$native_cc" || return 1
+		make DESTDIR="$SWMMU_SYSROOT" install.libs install.includes || return 1
+		return 0
+	fi
 	./configure \
 		--build=$CBUILD \
 		--host=$CHOST \
@@ -103,6 +128,13 @@ build() {
 }
 
 package() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		make DESTDIR="$pkgdir" install.libs install.includes || return 1
+		# Terminfo is architecture-independent data; do not run the guest tic.
+		mkdir -p "$pkgdir/usr/share/terminfo"
+		tic -x -o "$pkgdir/usr/share/terminfo" misc/terminfo.src || return 1
+		return 0
+	fi
 	make -j1 DESTDIR="$pkgdir" install
 
 	cd "$pkgdir"
