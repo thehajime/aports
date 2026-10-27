@@ -97,6 +97,14 @@ swmmu_guest_profile() {
 
 	EOF
 	local real_cc="${CC:-${CROSS_COMPILE}gcc}"
+	# build() and package() may source the same profile in one abuild shell.
+	# Reuse the saved native compiler instead of wrapping our own wrapper.
+	if [ "$real_cc" = "$srcdir/swmmu-cc" ]; then
+		real_cc="${SWMMU_REAL_CC:-}"
+		[ -n "$real_cc" ] && [ "$real_cc" != "$srcdir/swmmu-cc" ] || {
+			error "Missing native compiler while reusing SWMMU profile"; return 1;
+		}
+	fi
 	case "$real_cc" in
 	/*) ;;
 	*) real_cc=$(command -v "$real_cc") || { error "Guest GCC not found: $real_cc"; return 1; };;
