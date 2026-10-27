@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 trap 'status=$?; if [ "$status" -ne 0 ]; then echo "build-nommu-apks.sh failed (exit $status)" >&2; fi' EXIT
 
-apk add --no-cache alpine-sdk bash doas git bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync
+apk add --no-cache alpine-sdk bash doas git bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync \
+	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo
 
 # Build the plugin with the same Alpine GCC that will compile the guest
 # userspace packages. GCC plugins are tied to the host compiler ABI.
@@ -26,35 +28,22 @@ printf 'permit nopass builder as root\n' >/etc/doas.d/abuild.conf
 chmod 0400 /etc/doas.d/abuild.conf
 
 for profile in nommu-plain nommu-swmmu; do
-	mkdir -p "/home/builder/aports-$profile/main" "/home/builder/aports-$profile/scripts" "/out/$profile/packages" "/out/$profile/tools"
+	mkdir -p "/home/builder/aports-$profile/main" "/home/builder/aports-$profile/scripts" "/out/$profile/packages" "/out/$profile/tools" "/out/$profile/toolchain"
 	cp -a /src/main/musl /src/main/busybox "/home/builder/aports-$profile/main/"
 	cp -a /src/scripts/swmmu-profile.sh /src/scripts/swmmu-cc "/home/builder/aports-$profile/scripts/"
 	if [ "$profile" = nommu-swmmu ]; then
-		cp -a /src/main/openssl /src/main/python3 /src/main/nginx /src/main/coreutils \
+		mkdir -p "/home/builder/aports-$profile/community"
+		cp -a /src/main/openssl /src/main/zlib /src/main/apk-tools \
+			/src/main/python3 /src/main/nginx /src/main/coreutils \
+			/src/main/ncurses /src/main/pcre /src/main/libcap /src/main/zsh \
 			"/home/builder/aports-$profile/main/"
+		cp -a /src/community/emacs "/home/builder/aports-$profile/community/"
 		cp -a /src/scripts/swmmu-prepare.sh "/home/builder/aports-$profile/scripts/"
-		mkdir -p "/out/$profile/toolchain"
-		gcc -dumpfullversion >"/out/$profile/toolchain/gcc-version"
-		# Avoid enabling target extensions against host-only libraries.
-		python3 - "/home/builder/aports-$profile/main/python3/APKBUILD" <<'PYAPK'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-text = path.read_text()
-old = '\tmakedepends="bash python3-dev openssl-dev"'
-new = '\tmakedepends="$makedepends bash python3-dev openssl-dev"'
-old_subpackages = '\tarch="x86_64"\n\tsubpackages="$pkgname-nommu::x86_64"'
-new_subpackages = old_subpackages + '\n\toptions="$options !tracedeps"'
-old_configure = '\t\tac_cv_file__dev_ptmx=yes \\\n'
-new_configure = '\t\tPKG_CONFIG=false \\\n\t\tac_cv_file__dev_ptmx=yes \\\n'
-if (text.count(old) != 1 or text.count(old_subpackages) != 1
-        or text.count(old_configure) != 1):
-    raise SystemExit(f"expected one SWMMU_ONLY dependency/configure block in {path}")
-text = (text.replace(old, new)
-        .replace(old_subpackages, new_subpackages)
-        .replace(old_configure, new_configure))
-path.write_text(text)
-PYAPK
+		# GitLab rejects unauthenticated archive downloads from GitHub-hosted
+		# runners with HTTP 418.  The Alpine GitHub mirror carries the same
+		# signed tag and resolves to the same commit; use its archive with an
+		# explicit filename and checksum in this disposable package tree.
+		sh "$script_dir/fix-nommu-package-recipes.sh" "/home/builder/aports-$profile/main"
 	fi
 done
 chown -R builder:abuild /home/builder /out /var/cache/distfiles
@@ -64,11 +53,27 @@ set -eu
 export PACKAGER="UML CI <uml-ci@example.invalid>"
 abuild-keygen -a -i -n
 
+abuild_fetch_retry() {
+	attempt=1
+	while ! abuild fetch; do
+		if [ "$attempt" -ge 5 ]; then
+			echo "source fetch failed after $attempt attempts in $PWD" >&2
+			return 1
+		fi
+		delay=$((attempt * 10))
+		echo "source fetch attempt $attempt failed; retrying in ${delay}s" >&2
+		sleep "$delay"
+		attempt=$((attempt + 1))
+	done
+}
+
 build_profile() {
 	profile=$1
 	export REPODEST="/out/$profile"
+	${CC:-gcc} -dumpfullversion >"/out/$profile/toolchain/gcc-version"
 	if [ "$profile" = nommu-swmmu ]; then
 		export SWMMU=1
+		export SWMMU_DIRECT_WINDOW=1
 		export SWMMU_KERNEL_SRC=/kernel
 		export SWMMU_KERNEL_BUILD=/tmp/kernel-build
 		export SWMMU_PLUGIN=/tmp/kernel-build/scripts/gcc-plugins/swmmu_plugin.so
@@ -79,19 +84,41 @@ build_profile() {
 		unset SWMMU_PLUGIN SWMMU_UAPI SWMMU_SYSROOT SWMMU_WRAPPER_SOURCE
 	fi
 	cd "$HOME/aports-$profile/main/musl"
+	abuild_fetch_retry
 	abuild -r
 	cd "$HOME/aports-$profile/main/busybox"
+	abuild_fetch_retry
 	abuild -r
 	if [ "$profile" = nommu-swmmu ]; then
 		"$HOME/aports-$profile/scripts/swmmu-prepare.sh" check
 		cd "$HOME/aports-$profile/main/openssl"
+		abuild_fetch_retry
 		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/python3"
+		cd "$HOME/aports-$profile/main/zlib"
+		abuild_fetch_retry
 		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/nginx"
+		cd "$HOME/aports-$profile/main/apk-tools"
+		abuild_fetch_retry
 		SWMMU_ONLY=1 abuild -r
 		cd "$HOME/aports-$profile/main/coreutils"
+		abuild_fetch_retry
 		SWMMU_ONLY=1 abuild -r
+		cd "$HOME/aports-$profile/main/nginx"
+		abuild_fetch_retry
+		SWMMU_ONLY=1 abuild -r
+		cd "$HOME/aports-$profile/main/python3"
+		abuild_fetch_retry
+		SWMMU_ONLY=1 abuild -r
+		# Native build dependencies are preinstalled above. Never install a
+		# target musl-nommu dependency into the build host through abuild.
+		for package in ncurses pcre libcap zsh; do
+			cd "$HOME/aports-$profile/main/$package"
+			abuild_fetch_retry
+			SWMMU_ONLY=1 abuild -d -r
+		done
+		cd "$HOME/aports-$profile/community/emacs"
+		abuild_fetch_retry
+		SWMMU_ONLY=1 abuild -d -r
 	fi
 	for package in busybox-nommu musl-nommu; do
 		set -- "$REPODEST/main/x86_64/$package"-*.apk
@@ -103,8 +130,10 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-swmmu ]; then
-		for package in libcrypto3 libssl3 openssl-dev python3-nommu nginx-nommu coreutils-nommu; do
-			set -- "$REPODEST/main/x86_64/$package"-*.apk
+		for package in libcrypto3 libssl3 openssl-dev zlib-nommu apk-tools-nommu \
+			coreutils-nommu nginx-nommu python3-nommu \
+			ncurses-nommu pcre-nommu libcap-nommu zsh-nommu; do
+			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SWMMU APK for $package; matches: $*" >&2
 				exit 1
@@ -112,6 +141,12 @@ build_profile() {
 			echo "Collecting $profile/$package: $1"
 			cp "$1" "/out/$profile/packages/"
 		done
+		set -- "$REPODEST/community/x86_64/emacs-nommu"-[0-9]*.apk
+		[ "$#" -eq 1 ] && [ -f "$1" ] || {
+			echo "expected one built SWMMU Emacs APK; matches: $*" >&2
+			exit 1
+		}
+		cp "$1" "/out/$profile/packages/"
 	fi
 	set -- "$REPODEST/main/x86_64/busybox-static"-*.apk
 	[ "$#" -eq 1 ] && [ -f "$1" ] || {
