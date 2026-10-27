@@ -54,17 +54,19 @@ source="
 	no-git-repo.patch
 	fix-malloc-alignment-assert-on-musl.patch
 	swmmu-pdumper.diff
+	swmmu-create-dump.sh
 	"
 options="!check" # how do you test a text editor without editing text?
 
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	pkgname="emacs-nommu"
-	pkgrel=2
+	pkgrel=4
 	pkgdesc="$_pkgdesc (SWMMU terminal and batch)"
 	arch="x86_64"
 	builddir="$srcdir/emacs-$pkgver"
 	subpackages=""
 	depends="musl-nommu ncurses-nommu"
+	install="emacs-nommu.post-install emacs-nommu.post-upgrade"
 	makedepends="autoconf automake gawk ncurses-dev texinfo"
 	options="$options !tracedeps"
 fi
@@ -111,6 +113,14 @@ _swmmu_package() {
 		"$pkgdir/usr/share/emacs/$pkgver/" || return 1
 	install -Dm644 "$builddir/guest-build/etc/DOC" \
 		"$pkgdir/usr/share/emacs/$pkgver/etc/DOC" || return 1
+	install -Dm755 "$srcdir/swmmu-create-dump.sh" \
+		"$pkgdir/usr/libexec/uml-swmmu/emacs-create-dump" || return 1
+	local exec_directory
+	exec_directory=$(sed -n 's/^#define PATH_EXEC "\(.*\)"/\1/p' \
+		"$builddir/guest-build/src/epaths.h") || return 1
+	[ -n "$exec_directory" ] || return 1
+	mkdir -p "$pkgdir/usr/share/uml-swmmu"
+	printf '%s\n%s\n' "$pkgver" "$exec_directory" > "$pkgdir/usr/share/uml-swmmu/emacs-layout"
 }
 
 # secfixes:
@@ -428,4 +438,5 @@ sha512sums="
 a11288460bb07436b684e48dba0142e35ab93f76cabd236b34bce99809c4c578b2f0526b592e1624f45e01a4cca71e55293e150a36ec5b746fc837691bc291a1  no-git-repo.patch
 89b6ee4d14465605ae5f2ec7694220d93f10fa5a9d41003b085e09d8d27bc1bac24859fef1ce0cea511d6e49dadd89d1e10c80e52d40375852a9f9f00d0b362f  fix-malloc-alignment-assert-on-musl.patch
 a499b64fa0e3e71a41390da304ff5e76bdf4fcd0ec061052c9bdf1a27a046a0fd8d4bbd05a27202070356cf237ae9752f4a82f67c7312b1666fc4b0b2b6eafdb  swmmu-pdumper.diff
+467a43317b308166fb7c448faa32c6566bd7e937bd5aada70dff78b950b48654236b5312797e01f2e0912830e3322030e6ef7777faad9508efb9d8c7dc01bb67  swmmu-create-dump.sh
 "
