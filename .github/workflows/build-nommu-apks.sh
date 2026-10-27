@@ -3,7 +3,7 @@ set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 trap 'status=$?; if [ "$status" -ne 0 ]; then echo "build-nommu-apks.sh failed (exit $status)" >&2; fi' EXIT
 
-apk add --no-cache alpine-sdk bash doas git bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync \
+apk add --no-cache alpine-sdk bash doas git curl ca-certificates bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync \
 	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo
 
 # Build the plugin with the same Alpine GCC that will compile the guest
