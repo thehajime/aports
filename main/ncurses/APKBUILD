@@ -30,6 +30,7 @@ builddir="$srcdir/$pkgname-$_pkgver"
 
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	pkgname="ncurses-nommu"
+	pkgrel=1
 	pkgdesc="Instrumented wide-character terminal libraries for SWMMU"
 	arch="x86_64"
 	subpackages=""
@@ -103,6 +104,10 @@ build() {
 			--with-terminfo-dirs=/etc/terminfo:/usr/share/terminfo || return 1
 		make CC="$guest_cc" BUILD_CC="$native_cc" || return 1
 		make DESTDIR="$SWMMU_SYSROOT" install.libs install.includes || return 1
+		local lib
+		for lib in tinfo ncurses curses; do
+			ln -sf libncursesw.so "$SWMMU_SYSROOT/usr/lib/lib$lib.so" || return 1
+		done
 		return 0
 	fi
 	./configure \
@@ -130,6 +135,10 @@ build() {
 package() {
 	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 		make DESTDIR="$pkgdir" install.libs install.includes || return 1
+		local lib
+		for lib in tinfo ncurses curses; do
+			ln -sf libncursesw.so "$pkgdir/usr/lib/lib$lib.so" || return 1
+		done
 		# Terminfo is architecture-independent data; do not run the guest tic.
 		mkdir -p "$pkgdir/usr/share/terminfo"
 		tic -x -o "$pkgdir/usr/share/terminfo" misc/terminfo.src || return 1
