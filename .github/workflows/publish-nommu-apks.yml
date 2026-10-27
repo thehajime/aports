@@ -101,7 +101,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ci-nommu-${{ steps.source-revisions.outputs.kernel_sha }}-${{ steps.source-revisions.outputs.aports_sha }}
-          target_commitish: master
+          target_commitish: ${{ steps.source-revisions.outputs.aports_sha }}
           name: Temporary NOMMU APKs for kernel ${{ steps.source-revisions.outputs.kernel_sha }}
           body_path: ${{ runner.temp }}/nommu-apks/manifest.txt
           prerelease: true
