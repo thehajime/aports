@@ -103,3 +103,60 @@ This verifies the exported SWMMU UAPI, musl runtime files and startup objects,
 and asks GCC to load the instrumentation plugin. `scripts/swmmu-profile.sh`
 contains the shared compiler-wrapper and staged-musl setup used by package
 recipes.
+
+## Terminal applications: zsh and Emacs
+
+The pre-SVM production profile uses `SWMMU_DIRECT_WINDOW=1` for musl and every
+instrumented dependency/application. Export it before creating the sysroot;
+changing runtime/plugin policy requires a matching rebuilt sysroot. No per-source
+native allowlist is used for these packages.
+
+Build ncurses, PCRE (without JIT) and libcap before zsh/Emacs. Configure and
+source-generation tools run on the native builder; only target compilation and
+linking use the SWMMU wrapper. Preinstall the native build tools/development
+packages (`ncurses-dev`, `pcre-dev`, `libcap-dev`, `gawk`, `texinfo`, autotools,
+and the usual Alpine SDK). With those native dependencies already installed,
+use `abuild -d` so abuild does not install target musl into the build host:
+
+```sh
+export SWMMU=1 SWMMU_ONLY=1 SWMMU_DIRECT_WINDOW=1
+for package in ncurses pcre libcap zsh; do
+    (cd "$APORTS/main/$package" && abuild -d -r)
+done
+(cd "$APORTS/community/emacs" && abuild -d -r)
+```
+
+Keep the target `ncurses-nommu`, `pcre-nommu`, `libcap-nommu`, `zsh-nommu` and
+`emacs-nommu` APKs in the guest package set. Target ncurses provides the usual
+curses/tinfo linker aliases. The shared profile is idempotent when a package
+function re-enters it; do not wrap an already wrapped compiler recursively.
+Coreutils deliberately ignores the native builder's optional libcap probe;
+that optional feature is independent of zsh's instrumented libcap dependency.
+
+Emacs is a terminal/batch build with portable dumping, without GUI, GMP or
+native compilation/JIT. Native make-docfile/make-fingerprint helpers are built
+separately. The package installs raw target temacs as its versioned Emacs and
+ships Lisp, DOC and an installed-layout description. Do not execute target
+temacs on the build host or generate its dump there.
+
+When assembling a rootfs from the host, install the APKs with `--no-scripts`.
+After booting the guest, generate and verify its portable dump:
+
+```sh
+/usr/libexec/uml-swmmu/emacs-create-dump
+emacs --batch -Q --eval '(princ (if (pdumper-stats) "dump-loaded\n" "no-dump\n"))'
+zsh -f -c 'print -r -- zsh-ready'
+```
+
+The Emacs guest install/upgrade hooks call that same helper. Its dump reader
+falls back to the existing heap reader when NOMMU rejects MAP_FIXED with
+EINVAL/ENOSYS/ENOTSUP; allocation failures are not hidden. Verify real dump
+reload, not just successful dump-file creation. GUI/JIT remain follow-up U7.
+
+The linux-private CI branch's `check-swmmu-user-apps.sh` runs13 TAP checks in
+both seccomp and zpoline modes: real PTY startup/job control, scripts/pipelines,
+fork/exec, signals and zsh modules; Emacs dump creation/reload, byte compilation,
+GC, subprocess signals and terminal startup. Normal guest poweroff and host
+exit0 are required. Signed APK build success alone is not runtime acceptance.
+The standard standalone image publication runs this suite before export and
+requires anonymous post-publication boot checks before updating latest.

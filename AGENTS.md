@@ -109,3 +109,14 @@ Keep commands, source hashes, kernel hash/config, build logs, guest logs, and a 
 - passed, failed, blocked, and unrun checks.
 
 The prior package build could not fetch all Alpine edge dependencies through the in-container proxy, so complete signed BusyBox/musl APK builds were not verified. GitHub Actions, KUnit, and kselftests were outside the requested verification and were not run. Do not claim them as passed or start them unless a future task asks for them. Do not push to GitLab unless that task requests it; the user previously said they would handle that push later.
+
+### Terminal SWMMU package policy
+
+Build zsh and terminal Emacs directly on `nommu-uml-master-swmmu`, using the
+shared production profile and matching instrumented ncurses/PCRE/libcap. Keep
+native generators separate; never install target musl into the build host.
+Generate and reload the target Emacs portable dump inside the guest only.
+Host rootfs assembly uses `apk --no-scripts`. See `docs/swmmu-build.md` for the
+verified build order, helper path, validation suite and release boundaries.
+GUI/native compilation are follow-up U7 in linux-private CI's authoritative
+TODO index. Future package additions stay on this current SWMMU branch.
