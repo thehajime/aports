@@ -24,21 +24,29 @@ prepare() {
 }
 
 build() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
-		local _swmmu_cc="$CC"
-		CC="$_swmmu_cc" \
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		local _nommu_cc _nommu_sysroot
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			. "$startdir/../../scripts/svm-profile.sh"
+			svm_guest_profile || return 1
+			_nommu_sysroot=$SVM_SYSROOT
+		else
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			_nommu_sysroot=$SWMMU_SYSROOT
+		fi
+		_nommu_cc=$CC
+		CC="$_nommu_cc" \
 		CFLAGS="$CFLAGS -fno-lto" \
 		./configure \
 			--build=$CBUILD \
 			--host=x86_64-linux-musl \
-			--with-sysroot="$SWMMU_SYSROOT" \
+			--with-sysroot="$_nommu_sysroot" \
 			--prefix=/usr \
 			--disable-cxx \
 			--disable-shared \
 			--enable-static || return 1
-		make CC="$_swmmu_cc"
+		make CC="$_nommu_cc"
 		return
 	fi
 
@@ -57,16 +65,16 @@ build() {
 }
 
 check() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-		# The SWMMU binaries need a UML guest and cannot run in the build container.
-		echo "Skipping GMP tests for SWMMU cross-build"
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		# The instrumented binaries need a UML guest and cannot run in the build container.
+		echo "Skipping GMP tests for instrumented NOMMU cross-build"
 		return 0
 	fi
 	[ "$CBUILD" = "$CHOST" ] && make check
 }
 
 package() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		make DESTDIR="$pkgdir" install
 		return 0
 	fi
@@ -89,7 +97,7 @@ e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df521
 85e367507f49288f14c929717ffc71c3b553315c95682bf2464422c3f778f5d1eae3ef30af23653b7046fb921b5862c26cdcde9fe909dd4209d589e633e8853c  gcc15.patch
 "
 
-if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages="$pkgname-nommu-dev:_nommu_dev"
 	makedepends="bash m4 texinfo libtool autoconf automake"
@@ -98,11 +106,11 @@ fi
 
 
 _nommu_dev() {
-	[ "${SWMMU:-0}" = 1 ] || {
-		error "Set SWMMU=1 to build the instrumented GMP NOMMU package"
+	[ "${SWMMU:-0}" = 1 ] || [ "${SVM:-0}" = 1 ] || {
+		error "Set SWMMU=1 or SVM=1 to build the instrumented GMP NOMMU package"
 		return 1
 	}
-	pkgdesc="GMP development files for SWMMU NOMMU"
+	pkgdesc="GMP development files for an instrumented NOMMU guest"
 	default_dev
 	depends="musl-nommu"
 }
