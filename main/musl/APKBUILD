@@ -3,7 +3,7 @@
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=musl
 pkgver=1.2.6
-pkgrel=7
+pkgrel=12
 pkgdesc="the musl c library (libc) implementation"
 url="https://musl.libc.org/"
 arch="all"
@@ -31,6 +31,12 @@ source="https://musl.libc.org/releases/musl-$pkgver.tar.gz
 	CVE-2026-40200.patch
 	fstatat-null.patch
 	adjust-paths.patch
+	svm-runtime.diff
+	svm-bootstrap-smoke.c
+	svm-pthread-smoke.c
+	svm-cancel-signal-smoke.c
+	svm-sync-smoke.c
+	svm-stage.sh
 	swmmu-runtime.diff
 	swmmu-direct-window.diff
 	swmmu_direct_window_guard.h
@@ -75,7 +81,7 @@ build() {
 	${CROSS_COMPILE}cc $CFLAGS -c "$srcdir"/__stack_chk_fail_local.c -o __stack_chk_fail_local.o
 	${CROSS_COMPILE}ar r libssp_nonshared.a __stack_chk_fail_local.o
 
-	if [ "$BOOTSTRAP" != "nolibc" ] && [ "${SWMMU_MUSL_ONLY:-0}" != 1 ]; then
+	if [ "$BOOTSTRAP" != "nolibc" ] && [ "${SWMMU_MUSL_ONLY:-0}" != 1 ] && [ "${SVM_MUSL_ONLY:-0}" != 1 ]; then
 		# getconf/getent/iconv
 		local i
 		for i in getconf getent iconv ; do
@@ -202,7 +208,22 @@ nommu() {
 	provides="musl=$pkgver-r$pkgrel"
 
 	local original_builddir=$builddir
-	if [ "${SWMMU:-0}" = 1 ]; then
+	if [ "${SVM:-0}" = 1 ]; then
+		[ "${SWMMU:-0}" != 1 ] || { echo "Select one SVM profile" >&2; return 1; }
+		[ "$CARCH" = x86_64 ] || { echo "SVM musl currently requires UML x86_64" >&2; return 1; }
+		[ -f "$SVM_PLUGIN" ] || { echo "Set SVM_PLUGIN to the matching GCC plugin" >&2; return 1; }
+		local CFLAGS="$CFLAGS" CPPFLAGS="$CPPFLAGS" SVM_MUSL_ONLY=1
+		local _plugin_name=${SVM_PLUGIN##*/}
+		_plugin_name=${_plugin_name%.so}
+		builddir="$srcdir/musl-$pkgver-svm"
+		cp -a "$original_builddir" "$builddir"
+		cd "$builddir"
+		make clean
+		patch -p1 < "$srcdir/svm-runtime.diff" || return 1
+		rm -f src/string/x86_64/memcpy.s src/string/x86_64/memmove.s src/string/x86_64/memset.s
+		export CPPFLAGS="$CPPFLAGS -DSVM_RUNTIME -DDL_NOMMU_SUPPORT=1"
+		export CFLAGS="$CFLAGS -fplugin=$SVM_PLUGIN -fplugin-arg-$_plugin_name-libc-local-translator"
+	elif [ "${SWMMU:-0}" = 1 ]; then
 		local CFLAGS="$CFLAGS" CPPFLAGS="$CPPFLAGS" SWMMU_MUSL_ONLY=1
 		. "$startdir/../../scripts/swmmu-profile.sh"
 		swmmu_require || return 1
@@ -221,6 +242,15 @@ nommu() {
 	fi
 	build
 	make DESTDIR="$subpkgdir" install
+	if [ "${SVM:-0}" = 1 ] && [ -n "${SVM_SYSROOT:-}" ]; then
+		case "$SVM_SYSROOT" in
+		/*)
+			make DESTDIR="$SVM_SYSROOT" install || return 1
+			sh "$srcdir/svm-stage.sh" "$SVM_SYSROOT" "${SVM_INTERPRETER:-/lib/ld-musl-x86_64.so.1}" || return 1
+			;;
+		*) echo "SVM_SYSROOT must be absolute" >&2; return 1 ;;
+		esac
+	fi
 	if [ "${SWMMU:-0}" = 1 ]; then
 		swmmu_stage_musl || return 1
 	fi
@@ -234,6 +264,12 @@ nommu() {
 }
 
 sha512sums="
+9b7f8740ff7b38fa3e74da323d900355d66099cbee1ae97d2a31ca303dcf27b27cd4b46e8a6b6fb28ba57047db61472aead6d116c19c4c2382108851397d7ec5  svm-sync-smoke.c
+042e9c18744adeae55577aa417fc60bad7d053056076beec0d51a6a4351c56ee69c0b37c4881be9e5a9d36c6e2b5eae8668a2ed3745607373a7cadf2edd04fad  svm-stage.sh
+c2ece0aa9232c5123ff1d0d63dd0838a599868edece80c399f81e0d6e2b9ba12c098af709f47767e91c2b729f62cb8c9884e0f8dd6dd0db5f2396ebe5fcb0bc8  svm-pthread-smoke.c
+3480263856f8d8120fa1b9d7d204be3ac8c6a9aa89786f595bca51a631f0dce62557dec4037e4b0d87161876aed45656e072262037f3f29b82f58695682db2b2  svm-cancel-signal-smoke.c
+77bc6e2b79eeb272960c60c970eeb6a7c796b1c6a86ba952cfd9e31aaf2c90db16b932aac560435f8c12c929a02993634768f858062b5c1bd958088b1247df32  svm-bootstrap-smoke.c
+5f1ecd4f115aea58ad650f093a68fd3f9ada66f6a91a66eee3efe04f14d46f36cc558ed616d82e687ff0443aa8d7ba289aa297ec0293ad5a3cae7c50acf44d80  svm-runtime.diff
 1adad96eddb3a2eb0cacb3e363b0046568925fcdd75cf8b0503f2139df1f693d64730779ca0ce8131b7624ab2d37f4247bb1d3393c523de6e30d2b1d7732555c  musl-1.2.6.tar.gz
 a76f79b801497ad994746cf82bb6eaf86f9e1ae646e6819fbae8532a7f4eee53a96ac1d4e789ec8f66aea2a68027b0597f7a579b3369e01258da8accfce41370  handle-aux-at_base.patch
 83ec0f774dbb5d4f4d4b917d149ea0ef609d028d18ae7624e90fedda6e3174c91ade93751bfd376adfa2848155110fc4dd02b6790363b98e5395c4787e8731e8  0001-add-stub-for-pthread_mutexattr_setprioceiling.patch

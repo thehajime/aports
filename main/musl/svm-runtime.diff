@@ -1,0 +1,402 @@
+--- a/src/internal/pthread_impl.h
++++ b/src/internal/pthread_impl.h
+@@ -58,6 +58,9 @@
+ 	volatile int killlock[1];
+ 	char *dlerror_buf;
+ 	void *stdio_locks;
++#ifdef SVM_RUNTIME
++	unsigned long *svm_root;
++#endif
+ 
+ 	/* Part 3 -- the positions of these fields relative to
+ 	 * the end of the structure is external and internal ABI. */
+@@ -195,7 +198,12 @@
+ extern hidden unsigned __default_guardsize;
+ 
+ #define DEFAULT_STACK_SIZE 131072
++#ifdef SVM_RUNTIME
++#include "svm_arch.h"
++#define DEFAULT_GUARD_SIZE SVM_DEFAULT_GUARD_SIZE
++#else
+ #define DEFAULT_GUARD_SIZE 8192
++#endif
+ 
+ #define DEFAULT_STACK_MAX (8<<20)
+ #define DEFAULT_GUARD_MAX (1<<20)
+--- /dev/null
++++ b/src/internal/svm_runtime.h
+@@ -0,0 +1,13 @@
++#ifndef SVM_RUNTIME_H
++#define SVM_RUNTIME_H
++#include <features.h>
++#include <stddef.h>
++
++#ifdef SVM_RUNTIME
++hidden void __svm_start_runtime(void);
++hidden void *__sv_virt2phys_internal(const void *, size_t);
++#else
++#define __svm_start_runtime() ((void)0)
++#endif
++
++#endif
+--- a/src/env/__libc_start_main.c
++++ b/src/env/__libc_start_main.c
+@@ -1,3 +1,4 @@
++#include "svm_runtime.h"
+ #include <elf.h>
+ #include <poll.h>
+ #include <fcntl.h>
+@@ -89,6 +90,7 @@
+ static int libc_start_main_stage2(int (*main)(int,char **,char **), int argc, char **argv)
+ {
+ 	char **envp = argv+argc+1;
++	__svm_start_runtime();
+ 	__libc_start_init();
+ 
+ 	/* Pass control to the application */
+--- a/ldso/dynlink.c
++++ b/ldso/dynlink.c
+@@ -1,3 +1,4 @@
++#include "svm_runtime.h"
+ #define _GNU_SOURCE
+ #define SYSCALL_NO_TLS 1
+ #include <stdlib.h>
+@@ -2057,6 +2058,7 @@
+ 	/* Switch to runtime mode: any further failures in the dynamic
+ 	 * linker are a reportable failure rather than a fatal startup
+ 	 * error. */
++	__svm_start_runtime();
+ 	runtime = 1;
+ 
+ 	debug.ver = 1;
+--- /dev/null
++++ b/src/misc/svm_runtime.c
+@@ -0,0 +1,82 @@
++/* SVM translation and startup must be built without the compiler plugin. */
++#ifdef SVM_RUNTIME
++#include <stddef.h>
++#include <stdint.h>
++#include <errno.h>
++#include "pthread_impl.h"
++#include "syscall.h"
++#include "svm_runtime.h"
++#include "svm_arch.h"
++
++#define PR_SVM_INSTALL_L1_TLS 0x53764d03
++#define PR_SVM_PHYS2VIRT 0x53764d02
++
++_Static_assert(sizeof(struct pthread) == 208, "SVM ELF note TCB size");
++_Static_assert(offsetof(struct pthread, svm_root) == 200, "SVM root offset");
++
++__asm__(".pushsection .note.svm,\"a\",@note\n"
++        ".balign 4\n.long 4,8,1\n.asciz \"SVM\"\n"
++        ".balign 4\n.long 2,208\n.popsection\n");
++
++static int runtime_ready;
++
++void __svm_start_runtime(void)
++{
++	if (__syscall(SYS_prctl, PR_SVM_INSTALL_L1_TLS,
++	    offsetof(struct pthread, svm_root), 0, 0, 0)) a_crash();
++	__atomic_store_n(&runtime_ready, 1, __ATOMIC_RELEASE);
++}
++
++void *__sv_virt2phys_internal(const void *pointer, size_t size)
++{
++	uintptr_t va = (uintptr_t)pointer, pa, entry, *leaf;
++	unsigned long *root;
++	size_t n;
++
++	if (va < SVM_VA_BASE || va - SVM_VA_BASE >= SVM_VA_SPAN)
++		return (void *)pointer;
++	if (!__atomic_load_n(&runtime_ready, __ATOMIC_ACQUIRE)) a_crash();
++	if (!size) size = 1;
++	if (size > SVM_VA_SPAN - (va - SVM_VA_BASE)) a_crash();
++	root = svm_arch_root();
++	if (!root) a_crash();
++	entry = __atomic_load_n(root + ((va >> 21) & 511), __ATOMIC_ACQUIRE);
++	if (!(entry & 1)) a_crash();
++	leaf = (uintptr_t *)(entry & -4096UL);
++	entry = __atomic_load_n(leaf + ((va >> 12) & 511), __ATOMIC_RELAXED);
++	if (!(entry & 1)) a_crash();
++	pa = (entry & -4096UL) | (va & 4095);
++	/* Scalar accesses spanning pages require contiguous physical backing. */
++	for (n = 4096 - (va & 4095); n < size; n += 4096) {
++		uintptr_t next = va + n;
++		entry = __atomic_load_n(root + ((next >> 21) & 511), __ATOMIC_ACQUIRE);
++		if (!(entry & 1)) a_crash();
++		leaf = (uintptr_t *)(entry & -4096UL);
++		entry = __atomic_load_n(leaf + ((next >> 12) & 511), __ATOMIC_RELAXED);
++		if (!(entry & 1) || (entry & -4096UL) != pa + n) a_crash();
++	}
++	return (void *)pa;
++}
++
++void *sv_virt2phys(const void *p, size_t n)
++{
++	return __sv_virt2phys_internal(p, n);
++}
++
++void *__sv_phys2virt_local(const void *p, size_t n)
++{
++	unsigned long va;
++	long ret;
++	/* Loader/stack/native data retain PA identity in the current UML lane. */
++	if (!__atomic_load_n(&runtime_ready, __ATOMIC_ACQUIRE)) return (void *)p;
++	ret = __syscall(SYS_prctl, PR_SVM_PHYS2VIRT, p, n, &va, 0);
++	if (ret == -ENOENT) return (void *)p;
++	if (ret) a_crash();
++	return (void *)va;
++}
++
++void *sv_phys2virt(const void *p, size_t n)
++{
++	return __sv_phys2virt_local(p, n);
++}
++#endif
+--- /dev/null
++++ b/arch/x86_64/svm_arch.h
+@@ -0,0 +1,18 @@
++#ifndef SVM_ARCH_H
++#define SVM_ARCH_H
++#include "svm_runtime.h"
++#define SVM_DEFAULT_GUARD_SIZE 0
++#define SVM_VA_BASE 0x1000000000UL
++#define SVM_VA_SPAN 0x40000000UL
++static inline unsigned long *svm_arch_root(void)
++{
++	unsigned long *root;
++	__asm__("mov %%fs:200,%0" : "=r"(root));
++	return root;
++}
++static inline void *svm_arch_clone_stack(void *stack)
++{
++	unsigned long top = (unsigned long)stack & -16UL;
++	return (char *)__sv_virt2phys_internal((void *)(top - 16), 16) + 16;
++}
++#endif
+--- a/Makefile
++++ b/Makefile
+@@ -235,3 +235,6 @@
+ 	rm -f config.mak
+ 
+ .PHONY: all clean install install-libs install-headers install-tools
++
++# The SVM table walker and bootstrap cannot recursively translate themselves.
++$(CRT_OBJS) obj/src/misc/svm_runtime.o obj/src/misc/svm_runtime.lo: CFLAGS_ALL := $(filter-out -fplugin%,$(CFLAGS_ALL))
+--- a/arch/x86_64/atomic_arch.h
++++ b/arch/x86_64/atomic_arch.h
+@@ -1,15 +1,35 @@
++#ifdef SVM_RUNTIME
++#include <stddef.h>
++__attribute__((visibility("hidden")))
++void *__sv_virt2phys_internal(const void *, size_t);
++#define svm_atomic_pointer(p) __sv_virt2phys_internal((const void *)(p), sizeof *(p))
++#else
++#define svm_atomic_pointer(p) (p)
++#endif
++
+ #define a_cas a_cas
+ static inline int a_cas(volatile int *p, int t, int s)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__ (
+ 		"lock ; cmpxchg %3, %1"
+ 		: "=a"(t), "=m"(*p) : "a"(t), "r"(s) : "memory" );
+ 	return t;
+ }
+ 
++static inline void *__sv_atomic_pointer_word(volatile void *p)
++{
++#ifdef SVM_RUNTIME
++	return __sv_virt2phys_internal((const void *)p, sizeof(void *));
++#else
++	return (void *)p;
++#endif
++}
++
+ #define a_cas_p a_cas_p
+ static inline void *a_cas_p(volatile void *p, void *t, void *s)
+ {
++	p = __sv_atomic_pointer_word(p);
+ 	__asm__( "lock ; cmpxchg %3, %1"
+ 		: "=a"(t), "=m"(*(void *volatile *)p)
+ 		: "a"(t), "r"(s) : "memory" );
+@@ -19,6 +39,7 @@
+ #define a_swap a_swap
+ static inline int a_swap(volatile int *p, int v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"xchg %0, %1"
+ 		: "=r"(v), "=m"(*p) : "0"(v) : "memory" );
+@@ -28,6 +49,7 @@
+ #define a_fetch_add a_fetch_add
+ static inline int a_fetch_add(volatile int *p, int v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; xadd %0, %1"
+ 		: "=r"(v), "=m"(*p) : "0"(v) : "memory" );
+@@ -37,6 +59,7 @@
+ #define a_and a_and
+ static inline void a_and(volatile int *p, int v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; and %1, %0"
+ 		: "=m"(*p) : "r"(v) : "memory" );
+@@ -45,6 +68,7 @@
+ #define a_or a_or
+ static inline void a_or(volatile int *p, int v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; or %1, %0"
+ 		: "=m"(*p) : "r"(v) : "memory" );
+@@ -53,6 +77,7 @@
+ #define a_and_64 a_and_64
+ static inline void a_and_64(volatile uint64_t *p, uint64_t v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile(
+ 		"lock ; and %1, %0"
+ 		 : "=m"(*p) : "r"(v) : "memory" );
+@@ -61,6 +86,7 @@
+ #define a_or_64 a_or_64
+ static inline void a_or_64(volatile uint64_t *p, uint64_t v)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; or %1, %0"
+ 		 : "=m"(*p) : "r"(v) : "memory" );
+@@ -69,6 +95,7 @@
+ #define a_inc a_inc
+ static inline void a_inc(volatile int *p)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; incl %0"
+ 		: "=m"(*p) : "m"(*p) : "memory" );
+@@ -77,6 +104,7 @@
+ #define a_dec a_dec
+ static inline void a_dec(volatile int *p)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"lock ; decl %0"
+ 		: "=m"(*p) : "m"(*p) : "memory" );
+@@ -85,6 +113,7 @@
+ #define a_store a_store
+ static inline void a_store(volatile int *p, int x)
+ {
++	p = svm_atomic_pointer(p);
+ 	__asm__ __volatile__(
+ 		"mov %1, %0 ; lock ; orl $0,(%%rsp)"
+ 		: "=m"(*p) : "r"(x) : "memory" );
+--- a/src/thread/pthread_create.c
++++ b/src/thread/pthread_create.c
+@@ -1,3 +1,4 @@
++#include "svm_runtime.h"
+ #define _GNU_SOURCE
+ #include "pthread_impl.h"
+ #include "stdio_impl.h"
+@@ -193,6 +194,7 @@
+ 
+ static int start(void *p)
+ {
++	__svm_start_runtime();
+ 	struct start_args *args = p;
+ 	int state = args->control;
+ 	if (state) {
+@@ -210,6 +212,7 @@
+ 
+ static int start_c11(void *p)
+ {
++	__svm_start_runtime();
+ 	struct start_args *args = p;
+ 	int (*start)(void*) = (int(*)(void*)) args->start_func;
+ 	__pthread_exit((void *)(uintptr_t)start(args->start_arg));
+@@ -261,6 +264,10 @@
+ 		libc.threaded = 1;
+ 	}
+ 	if (attrp && !c11) attr = *attrp;
++#ifdef SVM_RUNTIME
++	/* This UML backend cannot enforce stack guard protection yet. */
++	if (attr._a_guardsize) return EINVAL;
++#endif
+ 
+ 	__acquire_ptc();
+ 	if (!attrp || c11) {
+@@ -311,6 +318,10 @@
+ 	}
+ 
+ 	new = __copy_tls(tsd - libc.tls_size);
++#ifdef SVM_RUNTIME
++	/* The child can translate its first C access before reinstalling TLS. */
++	new->svm_root = self->svm_root;
++#endif
+ 	new->map_base = map;
+ 	new->map_size = size;
+ 	new->stack = stack;
+@@ -352,7 +363,13 @@
+ 
+ 	__tl_lock();
+ 	if (!libc.threads_minus_1++) libc.need_locks = 1;
+-	ret = __clone((c11 ? start_c11 : start), stack, flags, args, &new->tid, TP_ADJ(new), &__thread_list_lock);
++	void *clone_stack = stack, *clone_tls = TP_ADJ(new);
++#ifdef SVM_RUNTIME
++	/* clone's assembly and hardware FS require native physical addresses. */
++	clone_stack = svm_arch_clone_stack(stack);
++	clone_tls = __sv_virt2phys_internal(clone_tls, sizeof(struct pthread));
++#endif
++	ret = __clone((c11 ? start_c11 : start), clone_stack, flags, args, &new->tid, clone_tls, &__thread_list_lock);
+ 
+ 	/* All clone failures translate to EAGAIN. If explicit scheduling
+ 	 * was requested, attempt it before unlocking the thread list so
+--- a/src/thread/pthread_cancel.c
++++ b/src/thread/pthread_cancel.c
+@@ -2,6 +2,7 @@
+ #include <string.h>
+ #include "pthread_impl.h"
+ #include "syscall.h"
++#include "svm_runtime.h"
+ 
+ hidden long __cancel(), __syscall_cp_asm(), __syscall_cp_c();
+ 
+@@ -30,7 +31,11 @@
+ 	    && (st==PTHREAD_CANCEL_DISABLE || nr==SYS_close))
+ 		return __syscall(nr, u, v, w, x, y, z);
+ 
+-	r = __syscall_cp_asm(&self->cancel, nr, u, v, w, x, y, z);
++	volatile void *cancel = &self->cancel;
++#ifdef SVM_RUNTIME
++	cancel = __sv_virt2phys_internal((const void *)cancel, sizeof self->cancel);
++#endif
++	r = __syscall_cp_asm(cancel, nr, u, v, w, x, y, z);
+ 	if (r==-EINTR && nr!=SYS_close && self->cancel &&
+ 	    self->canceldisable != PTHREAD_CANCEL_DISABLE)
+ 		r = __cancel();
+--- a/src/linux/clone.c
++++ b/src/linux/clone.c
+@@ -1,4 +1,8 @@
+ #define _GNU_SOURCE
++#include "svm_runtime.h"
++#ifdef SVM_RUNTIME
++#include "svm_arch.h"
++#endif
+ #include <stdarg.h>
+ #include <unistd.h>
+ #include <sched.h>
+@@ -43,6 +47,11 @@
+ 	}
+ 	va_end(ap);
+ 
++#ifdef SVM_RUNTIME
++	/* The assembly trampoline writes to the child stack before C runs. */
++	stack = svm_arch_clone_stack(stack);
++#endif
++
+ 	/* If CLONE_VM is used, it's impossible to give the child a consistent
+ 	 * thread structure. In this case, the best we can do is assume the
+ 	 * caller is content with an extremely restrictive execution context
