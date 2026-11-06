@@ -28,10 +28,10 @@ source="https://invisible-mirror.net/archives/ncurses/current/ncurses-$_pkgver.t
 	"
 builddir="$srcdir/$pkgname-$_pkgver"
 
-if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgname="ncurses-nommu"
 	pkgrel=1
-	pkgdesc="Instrumented wide-character terminal libraries for SWMMU"
+	pkgdesc="Instrumented wide-character terminal libraries for a NOMMU guest"
 	arch="x86_64"
 	subpackages=""
 	depends="musl-nommu"
@@ -90,23 +90,30 @@ _basic_terms="
 	"
 
 build() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-		local native_cc="${CC:-gcc}"
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
-		local guest_cc="$CC"
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		local _guest_cc _nommu_sysroot _native_cc="${CC:-gcc}"
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			. "$startdir/../../scripts/svm-profile.sh"
+			svm_guest_profile || return 1
+			_nommu_sysroot=$SVM_SYSROOT
+		else
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			_nommu_sysroot=$SWMMU_SYSROOT
+		fi
+		_guest_cc=$CC
 		# Configure probes and generator programs run on the build host.
-		CC="$native_cc" ./configure --prefix=/usr --with-shared \
+		CC="$_native_cc" ./configure --prefix=/usr --with-shared \
 			--enable-widec --without-normal --without-debug \
 			--without-progs --without-tests --without-ada \
 			--without-cxx-binding --without-cxx --without-manpages \
-			--with-build-cc="$native_cc" --disable-stripping \
+			--with-build-cc="$_native_cc" --disable-stripping \
 			--with-terminfo-dirs=/etc/terminfo:/usr/share/terminfo || return 1
-		make CC="$guest_cc" BUILD_CC="$native_cc" || return 1
-		make DESTDIR="$SWMMU_SYSROOT" install.libs install.includes || return 1
+		make CC="$_guest_cc" BUILD_CC="$_native_cc" || return 1
+		make DESTDIR="$_nommu_sysroot" install.libs install.includes || return 1
 		local lib
 		for lib in tinfo ncurses curses; do
-			ln -sf libncursesw.so "$SWMMU_SYSROOT/usr/lib/lib$lib.so" || return 1
+			ln -sf libncursesw.so "$_nommu_sysroot/usr/lib/lib$lib.so" || return 1
 		done
 		return 0
 	fi
@@ -133,7 +140,7 @@ build() {
 }
 
 package() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		make DESTDIR="$pkgdir" install.libs install.includes || return 1
 		local lib
 		for lib in tinfo ncurses curses; do
