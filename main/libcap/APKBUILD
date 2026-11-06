@@ -30,9 +30,9 @@ armv7)
 	;;
 esac
 
-if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgname="libcap-nommu"
-	pkgdesc="$pkgdesc (SWMMU instrumented)"
+	pkgdesc="$pkgdesc (instrumented NOMMU guest)"
 	arch="x86_64"
 	builddir="$srcdir/libcap-$pkgver"
 	subpackages=""
@@ -45,14 +45,22 @@ fi
 #     - CVE-2026-4878
 
 build() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		local _nommu_sysroot
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			. "$startdir/../../scripts/svm-profile.sh"
+			svm_guest_profile || return 1
+			_nommu_sysroot=$SVM_SYSROOT
+		else
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			_nommu_sysroot=$SWMMU_SYSROOT
+		fi
 		# _makenames is a host generator; compile only the target library.
 		make -C libcap BUILD_CC=gcc CC="$CC" lib=lib prefix=/usr GOLANG=no || return 1
-		mkdir -p "$SWMMU_SYSROOT/usr/lib" "$SWMMU_SYSROOT/usr/include/sys"
-		cp -a libcap/libcap.so* "$SWMMU_SYSROOT/usr/lib/" || return 1
-		install -m644 libcap/include/sys/capability.h "$SWMMU_SYSROOT/usr/include/sys/" || return 1
+		mkdir -p "$_nommu_sysroot/usr/lib" "$_nommu_sysroot/usr/include/sys"
+		cp -a libcap/libcap.so* "$_nommu_sysroot/usr/lib/" || return 1
+		install -m644 libcap/include/sys/capability.h "$_nommu_sysroot/usr/include/sys/" || return 1
 		return 0
 	fi
 	make BUILD_CC=gcc CC="${CC:-gcc}" lib=lib prefix=/usr GOLANG=no \
@@ -60,11 +68,14 @@ build() {
 }
 
 check() {
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		return 0
+	fi
 	make GOLANG=no test
 }
 
 package() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		mkdir -p "$pkgdir/usr/lib" "$pkgdir/usr/include/sys"
 		cp -a libcap/libcap.so* "$pkgdir/usr/lib/" || return 1
 		install -m644 libcap/include/sys/capability.h "$pkgdir/usr/include/sys/" || return 1
