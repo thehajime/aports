@@ -1,0 +1,58 @@
+--- a/trees.c
++++ b/trees.c
+@@ -128,6 +128,16 @@
+ #  define TCONST const
+ #endif
+ 
++#ifdef NO_INIT_GLOBAL_POINTERS
++local TCONST static_tree_desc static_l_desc =
++{(const ct_data *)0, (const intf *)0, LITERALS+1, L_CODES, MAX_BITS};
++
++local TCONST static_tree_desc static_d_desc =
++{(const ct_data *)0, (const intf *)0, 0, D_CODES, MAX_BITS};
++
++local TCONST static_tree_desc static_bl_desc =
++{(const ct_data *)0, (const intf *)0, 0, BL_CODES, MAX_BL_BITS};
++#else
+ local TCONST static_tree_desc static_l_desc =
+ {static_ltree, extra_lbits, LITERALS+1, L_CODES, MAX_BITS};
+ 
+@@ -136,6 +146,7 @@
+ 
+ local TCONST static_tree_desc static_bl_desc =
+ {(const ct_data *)0, extra_blbits, 0,   BL_CODES, MAX_BL_BITS};
++#endif
+ 
+ /* ===========================================================================
+  * Output a short LSB first on the stream.
+@@ -293,6 +304,14 @@
+  * Initialize the various 'constant' tables.
+  */
+ local void tr_static_init(void) {
++#ifdef NO_INIT_GLOBAL_POINTERS
++    static_l_desc.static_tree = static_ltree;
++    static_l_desc.extra_bits = extra_lbits;
++    static_d_desc.static_tree = static_dtree;
++    static_d_desc.extra_bits = extra_dbits;
++    static_bl_desc.extra_bits = extra_blbits;
++#endif
++
+ #if defined(GEN_TREES_H) || !defined(STDC)
+     static int static_init_done = 0;
+     int n;        /* iterates over tree elements */
+@@ -305,15 +324,6 @@
+ 
+     if (static_init_done) return;
+ 
+-    /* For some embedded targets, global variables are not initialized: */
+-#ifdef NO_INIT_GLOBAL_POINTERS
+-    static_l_desc.static_tree = static_ltree;
+-    static_l_desc.extra_bits = extra_lbits;
+-    static_d_desc.static_tree = static_dtree;
+-    static_d_desc.extra_bits = extra_dbits;
+-    static_bl_desc.extra_bits = extra_blbits;
+-#endif
+-
+     /* Initialize the mapping length (0..255) -> length code (0..28) */
+     length = 0;
+     for (code = 0; code < LENGTH_CODES-1; code++) {
