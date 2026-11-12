@@ -90,7 +90,7 @@ jobs:
           aports_repository=https://github.com/thehajime/aports
           aports_commit=$APORTS_SHA
           aports_branch=nommu-uml-master-swmmu
-          profiles=nommu-plain,nommu-swmmu
+          profiles=nommu-plain,nommu-svm
           alpine_base=edge
           swmmu_packages=libcrypto3,libssl3,openssl-dev,zlib-nommu,apk-tools-nommu,python3-nommu,nginx-nommu,coreutils-nommu,ncurses-nommu,pcre-nommu,libcap-nommu,zsh-nommu,emacs-nommu
           swmmu_direct_window=1

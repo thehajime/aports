@@ -27,11 +27,11 @@ mkdir -p /etc/doas.d /var/cache/distfiles /out/keys
 printf 'permit nopass builder as root\n' >/etc/doas.d/abuild.conf
 chmod 0400 /etc/doas.d/abuild.conf
 
-for profile in nommu-plain nommu-swmmu; do
+for profile in nommu-plain nommu-svm; do
 	mkdir -p "/home/builder/aports-$profile/main" "/home/builder/aports-$profile/scripts" "/out/$profile/packages" "/out/$profile/tools" "/out/$profile/toolchain"
 	cp -a /src/main/musl /src/main/busybox "/home/builder/aports-$profile/main/"
 	cp -a /src/scripts/swmmu-profile.sh /src/scripts/swmmu-cc "/home/builder/aports-$profile/scripts/"
-	if [ "$profile" = nommu-swmmu ]; then
+	if [ "$profile" = nommu-svm ]; then
 		mkdir -p "/home/builder/aports-$profile/community"
 		cp -a /src/main/openssl /src/main/zlib /src/main/apk-tools \
 			/src/main/python3 /src/main/nginx /src/main/coreutils \
@@ -71,7 +71,7 @@ build_profile() {
 	profile=$1
 	export REPODEST="/out/$profile"
 	${CC:-gcc} -dumpfullversion >"/out/$profile/toolchain/gcc-version"
-	if [ "$profile" = nommu-swmmu ]; then
+	if [ "$profile" = nommu-svm ]; then
 		export SWMMU=1
 		export SWMMU_DIRECT_WINDOW=1
 		export SWMMU_KERNEL_SRC=/kernel
@@ -89,7 +89,7 @@ build_profile() {
 	cd "$HOME/aports-$profile/main/busybox"
 	abuild_fetch_retry
 	abuild -r
-	if [ "$profile" = nommu-swmmu ]; then
+	if [ "$profile" = nommu-svm ]; then
 		"$HOME/aports-$profile/scripts/swmmu-prepare.sh" check
 		cd "$HOME/aports-$profile/main/openssl"
 		abuild_fetch_retry
@@ -129,13 +129,13 @@ build_profile() {
 		echo "Collecting $profile/$package: $1"
 		cp "$1" "/out/$profile/packages/"
 	done
-	if [ "$profile" = nommu-swmmu ]; then
+	if [ "$profile" = nommu-svm ]; then
 		for package in libcrypto3 libssl3 openssl-dev zlib-nommu apk-tools-nommu \
 			coreutils-nommu nginx-nommu python3-nommu \
 			ncurses-nommu pcre-nommu libcap-nommu zsh-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
-				echo "expected one built SWMMU APK for $package; matches: $*" >&2
+				echo "expected one built SVM APK for $package; matches: $*" >&2
 				exit 1
 			}
 			echo "Collecting $profile/$package: $1"
@@ -143,7 +143,7 @@ build_profile() {
 		done
 		set -- "$REPODEST/community/x86_64/emacs-nommu"-[0-9]*.apk
 		[ "$#" -eq 1 ] && [ -f "$1" ] || {
-			echo "expected one built SWMMU Emacs APK; matches: $*" >&2
+			echo "expected one built SVM Emacs APK; matches: $*" >&2
 			exit 1
 		}
 		cp "$1" "/out/$profile/packages/"
@@ -163,7 +163,7 @@ build_profile() {
 }
 
 build_profile nommu-plain
-build_profile nommu-swmmu
+build_profile nommu-svm
 
 set -- "$HOME/.config/abuild/"*.rsa.pub
 [ "$#" -eq 1 ] && [ -f "$1" ] || {
