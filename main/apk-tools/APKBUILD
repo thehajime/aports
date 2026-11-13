@@ -44,7 +44,7 @@ source="https://gitlab.alpinelinux.org/alpine/apk-tools/-/archive/v$pkgver/apk-t
 
 if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgname="$pkgname-nommu"
-	pkgdesc="Alpine Package Keeper built for the SWMMU NOMMU guest"
+	pkgdesc="Alpine Package Keeper built for a NOMMU guest"
 	arch="x86_64"
 	subpackages=""
 	depends=""

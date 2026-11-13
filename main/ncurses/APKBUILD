@@ -35,6 +35,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages=""
 	depends="musl-nommu"
+	provides="so:libncursesw.so.6 so:libpanelw.so.6"
 	options="$options !tracedeps"
 fi
 

@@ -395,9 +395,11 @@ ab8eaa2858d5109049b1f9f553198d40e0ef8d78211ad6455f7b491af525bffb16738fed60fc84e9
 # multi-architecture recipe unchanged outside the NOMMU profiles.
 if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
-	subpackages="$pkgname-nommu::x86_64"
+	pkgname="$pkgname-nommu"
+	pkgdesc="Python interpreter built for NOMMU guests"
+	subpackages=
 	makedepends="bash python3-dev openssl-dev"
-	depends=""
+	depends="musl-nommu libssl3 libcrypto3"
 fi
 
 nommu() {
@@ -405,7 +407,7 @@ nommu() {
 		error "Set SWMMU=1 or SVM=1 to build the instrumented Python NOMMU package"
 		return 1
 	}
-	pkgdesc="Python interpreter built for SWMMU NOMMU"
+	pkgdesc="Python interpreter built for NOMMU"
 	depends="musl-nommu libssl3 libcrypto3"
 	amove usr/bin/python* usr/lib/libpython$_basever.so* usr/lib/python$_basever
 }
