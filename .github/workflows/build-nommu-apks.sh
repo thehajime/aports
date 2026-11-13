@@ -4,8 +4,9 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 trap 'status=$?; if [ "$status" -ne 0 ]; then echo "build-nommu-apks.sh failed (exit $status)" >&2; fi' EXIT
 
 apk add --no-cache alpine-sdk bash doas git curl ca-certificates bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync \
-	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo meson lua5.5
+	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo meson lua5.4
 install -m755 /src/main/meson/abuild-meson /usr/local/bin/abuild-meson
+ln -sf /usr/bin/lua5.4 /usr/local/bin/lua5.5
 
 # Build the SVM plugin with the same Alpine GCC used for the guest packages.
 # GCC plugins are tied to the host compiler ABI.
