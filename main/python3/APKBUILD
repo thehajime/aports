@@ -146,11 +146,22 @@ build() {
 		local _nommu_cxxflags="${CXXFLAGS/-fstack-clash-protection} -O2 -fno-lto -fno-stack-clash-protection"
 		export CFLAGS_NODIST="$_nommu_cflags" CXXFLAGS_NODIST="$_nommu_cxxflags"
 		export LDFLAGS_NODIST="$LDFLAGS -Wl,-z,stack-size=0x200000"
+		# Cross builds need a native interpreter matching this CPython release.
+		# Alpine 3.22 ships Python 3.12, while this aports branch builds 3.14.
+		mkdir -p "$srcdir/python-host"
+		cd "$srcdir/python-host"
+		CC="${REALGCC:-gcc}" CXX="${REALCXX:-g++}" \
+		CFLAGS="${CFLAGS:-}" CXXFLAGS="${CXXFLAGS:-}" LDFLAGS="${LDFLAGS:-}" \
+		"$builddir/configure" --prefix="$srcdir/python-host/install" \
+			--disable-shared --without-ensurepip --without-static-libpython || return 1
+		make -j"${JOBS:-2}" CC="${REALGCC:-gcc}" CXX="${REALCXX:-g++}" python || return 1
+		local _build_python="$srcdir/python-host/python"
+		cd "$builddir"
 		ac_cv_file__dev_ptmx=yes ac_cv_file__dev_ptc=no ac_cv_buggy_getaddrinfo=no \
 		CC="$_nommu_cc" HOSTCC="${HOSTCC:-gcc}" \
 		./configure --build=x86_64-linux-gnu --host=x86_64-linux-musl --prefix=/usr \
 			--enable-ipv6 --enable-shared --disable-optimizations --disable-test-modules \
-			--with-build-python="python$_basever" --with-openssl="$SVM_SYSROOT/usr" \
+			--with-build-python="$_build_python" --with-openssl="$SVM_SYSROOT/usr" \
 			--with-openssl-rpath=no --without-ensurepip || return 1
 		make HOSTCC="${HOSTCC:-gcc}" CC="$_nommu_cc"
 		return
