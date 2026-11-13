@@ -157,6 +157,7 @@ build() {
 		make -j"${JOBS:-2}" CC="${REALGCC:-gcc}" CXX="${REALCXX:-g++}" python || return 1
 		local _build_python="$srcdir/python-host/python"
 		cd "$builddir"
+		py_cv_module__lzma=n/a py_cv_module__zstd=n/a \
 		ac_cv_file__dev_ptmx=yes ac_cv_file__dev_ptc=no ac_cv_buggy_getaddrinfo=no \
 		CC="$_nommu_cc" HOSTCC="${HOSTCC:-gcc}" \
 		./configure --build=x86_64-linux-gnu --host=x86_64-linux-musl --prefix=/usr \
