@@ -97,7 +97,7 @@ subpackages="
 	$pkgname-vim::noarch
 	$pkgname-mod-dev:_mod_dev:noarch
 	$pkgname-nommu::x86_64
-	"
+"
 source="https://nginx.org/download/nginx-$pkgver.tar.gz
 	$pkgname-tests-$_tests_rev.tar.gz::https://github.com/nginx/nginx-tests/archive/$_tests_rev.tar.gz
 	$pkgname-njs-$_njs_ver.tar.gz::https://github.com/nginx/njs/archive/$_njs_ver.tar.gz
@@ -360,7 +360,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	subpackages="$pkgname-nommu::x86_64"
 	makedepends="linux-headers openssl-dev"
 	checkdepends=
-	options="!check"
+	options="!check${SVM_ONLY:+ !strip}"
 	pkgusers=
 	pkggroups=
 	install=
@@ -780,11 +780,9 @@ a0da355888398f86a6b5d065e58c05f9e057589ee785be9f515d77d7a020ae5a7b0656f5af30fb3b
 
 if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	sha512sums="
-	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
-	8e84d4a07d36a1e0e83a5bf4a15098305ae29f007910b7d9cae55084d13acb7d481ce5aff7ea86a2e3311175d79d1c8d9beb00d45c5bcc0fd245cfdd5c37b8ec  nginx-swmmu.conf
-	"
+48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
+8e84d4a07d36a1e0e83a5bf4a15098305ae29f007910b7d9cae55084d13acb7d481ce5aff7ea86a2e3311175d79d1c8d9beb00d45c5bcc0fd245cfdd5c37b8ec  nginx-swmmu.conf
+"
 elif [ "${SVM_ONLY:-0}" = 1 ]; then
-	sha512sums="
-	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
-	"
+	sha512sums="48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz"
 fi
