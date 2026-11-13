@@ -42,7 +42,7 @@ su -s /bin/sh builder -c '
 set -eu
 export PACKAGER="UML CI <uml-ci@example.invalid>"
 abuild-keygen -a -n
-doas cp "$HOME"/.config/abuild/*.rsa.pub /etc/apk/keys/
+doas cp "$HOME"/.abuild/*.rsa.pub /etc/apk/keys/
 
 abuild_fetch_retry() {
 	attempt=1
@@ -121,7 +121,7 @@ build_profile() {
 build_profile nommu-plain
 build_profile nommu-svm
 
-set -- "$HOME/.config/abuild/"*.rsa.pub
+set -- "$HOME/.abuild/"*.rsa.pub
 [ "$#" -eq 1 ] && [ -f "$1" ] || {
 	echo "expected one abuild public key; matches: $*" >&2
 	ls -la "$HOME/.config/abuild" >&2 || true
