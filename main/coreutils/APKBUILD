@@ -218,5 +218,9 @@ nommu() {
 	}
 	pkgdesc="Core file, text and shell utilities built for NOMMU"
 	depends="musl-nommu"
-	amove usr/bin usr/libexec/coreutils
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		amove bin usr/libexec/coreutils
+	else
+		amove usr/bin usr/libexec/coreutils
+	fi
 }
