@@ -44,7 +44,7 @@ build() {
 		utils_cv_avx512_pclmul_intrinsic_exists=no utils_cv_avx2_intrinsic_exists=no \
 		utils_cv_avx512_intrinsic_exists=no ac_cv_header_sys_capability_h=no \
 		ac_cv_lib_cap_cap_get_file=no CC="${REALGCC:-gcc}" \
-		CFLAGS="$CFLAGS -fno-lto -fno-stack-clash-protection" CONFIG_SHELL=/bin/bash \
+		CFLAGS="$CFLAGS -fno-lto -fno-stack-clash-protection -Dalignof=_Alignof" CONFIG_SHELL=/bin/bash \
 		./configure --build=$CBUILD --host=x86_64-linux-musl --prefix=/usr --bindir=/bin \
 			--sysconfdir=/etc --disable-nls --disable-acl --disable-xattr \
 			--without-openssl --without-libgmp \
