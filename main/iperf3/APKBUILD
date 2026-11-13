@@ -51,6 +51,7 @@ check() {
 package() {
 	make DESTDIR="$pkgdir" install
 	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		rm -rf "$pkgdir"/usr/share/man
 		return 0
 	fi
 
