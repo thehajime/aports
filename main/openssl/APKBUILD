@@ -36,6 +36,10 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	subpackages="$pkgname-dev libcrypto$_abiver:_libcrypto libssl$_abiver:_libssl"
 	install=
 fi
+if [ "${SVM:-0}" = 1 ]; then
+	subpackages="$pkgname-dev libcrypto$_abiver:_libcrypto libssl$_abiver:_libssl"
+	install=
+fi
 builddir="$srcdir/openssl-$pkgver"
 
 # secfixes:
