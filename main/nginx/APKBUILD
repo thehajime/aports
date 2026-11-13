@@ -627,6 +627,12 @@ nommu() {
 
 prepare_package() {
 	[ ! -d "${subpkgdir:-$pkgdir}" ] && die "Missing ${subpkgname:+sub}pkgdir for ${subpkgname:-$pkgname}"
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		# This standalone NOMMU package has explicit dependencies and no
+		# pkg-config, Python entry points, or symlinks to discover.
+		prepare_metafiles
+		return
+	fi
 	stripbin
 	prepare_metafiles
 	prepare_trace_rpaths
