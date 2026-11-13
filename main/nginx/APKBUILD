@@ -360,7 +360,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	subpackages="$pkgname-nommu::x86_64"
 	makedepends="linux-headers openssl-dev"
 	checkdepends=
-	options="!check${SVM_ONLY:+ !strip}"
+	options="!check${SVM_ONLY:+ !strip !archcheck}"
 	pkgusers=
 	pkggroups=
 	install=
