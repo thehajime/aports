@@ -294,6 +294,7 @@ package() {
 	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		make -j1 DESTDIR="$pkgdir" install
 		ln -sf python3.14 "$pkgdir"/usr/bin/python3
+		rm -f "$pkgdir"/usr/bin/python3-config "$pkgdir"/usr/bin/python$_basever-config
 		find "$pkgdir"/usr/lib/python$_basever -type d -name __pycache__ \
 			-prune -exec rm -rf {} +
 		rm -rf "$pkgdir"/usr/share/man
@@ -399,7 +400,8 @@ if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgdesc="Python interpreter built for NOMMU guests"
 	subpackages=
 	makedepends="bash python3-dev openssl-dev"
-	depends="musl-nommu libssl3 libcrypto3"
+	depends="musl-nommu libssl3 libcrypto3 ncurses-nommu zlib-nommu"
+	options="$options !tracedeps"
 fi
 
 nommu() {
