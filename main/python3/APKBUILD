@@ -295,6 +295,7 @@ package() {
 		make -j1 DESTDIR="$pkgdir" install
 		ln -sf python3.14 "$pkgdir"/usr/bin/python3
 		rm -f "$pkgdir"/usr/bin/python3-config "$pkgdir"/usr/bin/python$_basever-config
+		rm -rf "$pkgdir"/usr/lib/pkgconfig
 		find "$pkgdir"/usr/lib/python$_basever -type d -name __pycache__ \
 			-prune -exec rm -rf {} +
 		rm -rf "$pkgdir"/usr/share/man
