@@ -353,9 +353,10 @@ _rtmp_provides="$pkgname-rtmp"  # for backward compatibility
 
 if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	# The NOMMU variant is built independently from the full Alpine package.
-	if [ "${SVM_ONLY:-0}" = 1 ]; then _nommu_conf=nginx-svm.conf; else _nommu_conf=nginx-swmmu.conf; fi
-	source="https://nginx.org/download/nginx-$pkgver.tar.gz
-	$_nommu_conf"
+	source="https://nginx.org/download/nginx-$pkgver.tar.gz"
+	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+		source="$source nginx-swmmu.conf"
+	fi
 	subpackages="$pkgname-nommu::x86_64"
 	makedepends="linux-headers openssl-dev"
 	checkdepends=
@@ -595,7 +596,28 @@ nommu() {
 	mkdir -p "$subpkgdir/usr/sbin" "$subpkgdir/etc/nginx"
 	if [ "${SVM_ONLY:-0}" = 1 ]; then
 		install -Dm755 "$builddir"/objs-svm/nginx "$subpkgdir"/usr/sbin/nginx
-		install -Dm644 "$srcdir"/nginx-svm.conf "$subpkgdir"/etc/nginx/nginx.conf
+		cat > "$subpkgdir"/etc/nginx/nginx.conf <<-EOF
+		worker_processes 1;
+		user root;
+		daemon on;
+		master_process on;
+		pid /tmp/nginx-svm.pid;
+		error_log stderr notice;
+
+		events {
+			worker_connections 256;
+		}
+
+		http {
+			access_log off;
+			server {
+				listen 0.0.0.0:8080;
+				server_name localhost;
+				root /var/www/localhost/htdocs;
+				location / { try_files \$uri \$uri/ =404; }
+			}
+		}
+		EOF
 	else
 		install -Dm755 "$builddir"/objs-swmmu/nginx "$subpkgdir"/usr/sbin/nginx
 		install -Dm644 "$srcdir"/nginx-swmmu.conf \
@@ -764,6 +786,5 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 elif [ "${SVM_ONLY:-0}" = 1 ]; then
 	sha512sums="
 	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
-	001e4b198de898ba3005c39140184081a9337a6a43865e85d4f2233296dd94eb62ef83e4c5c9ea05d34b5c1fae0eee6a9f58285496f983eed88cf87d213f9765  nginx-svm.conf
 	"
 fi
