@@ -89,12 +89,12 @@ build_profile() {
 	if [ "$profile" = nommu-svm ]; then
 		for package in openssl zlib ncurses pcre libcap; do
 			cd "$HOME/aports-$profile/main/$package"
-			abuild_fetch_retry
+			SVM_ONLY=1 abuild_fetch_retry
 			SVM_ONLY=1 abuild -d -r
 		done
 		for package in apk-tools python3 nginx coreutils iperf3; do
 			cd "$HOME/aports-$profile/main/$package"
-			abuild_fetch_retry
+			SVM_ONLY=1 abuild_fetch_retry
 			SVM_ONLY=1 abuild -d -r
 		done
 	fi
