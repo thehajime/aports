@@ -35,6 +35,10 @@ for profile in nommu-plain nommu-svm; do
 	mkdir -p "/home/builder/aports-$profile/main" "/home/builder/aports-$profile/scripts" "/out/$profile/packages" "/out/$profile/tools" "/out/$profile/toolchain"
 	cp -a /src/main/musl /src/main/busybox "/home/builder/aports-$profile/main/"
 	cp -a /src/scripts/svm-profile.sh "/home/builder/aports-$profile/scripts/"
+	if [ "$profile" = nommu-svm ]; then
+		cp -a /src/main/zlib /src/main/ncurses /src/main/pcre /src/main/libcap \
+			"/home/builder/aports-$profile/main/"
+	fi
 done
 chown -R builder:abuild /home/builder /out /var/cache/distfiles
 
