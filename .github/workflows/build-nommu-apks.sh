@@ -37,6 +37,8 @@ for profile in nommu-plain nommu-svm; do
 	cp -a /src/scripts/svm-profile.sh "/home/builder/aports-$profile/scripts/"
 	if [ "$profile" = nommu-svm ]; then
 		cp -a /src/main/zlib /src/main/ncurses /src/main/pcre /src/main/libcap \
+			/src/main/openssl /src/main/apk-tools /src/main/python3 /src/main/nginx \
+			/src/main/coreutils /src/main/iperf3 \
 			"/home/builder/aports-$profile/main/"
 	fi
 done
@@ -71,6 +73,7 @@ build_profile() {
 		export SVM_PLUGIN=/tmp/kernel-build/scripts/gcc-plugins/svm_plugin.so
 		export SVM_UAPI=/tmp/kernel-uapi/include
 		export SVM_SYSROOT="$HOME/svm-sysroot"
+		export CFLAGS="${CFLAGS:-} -fno-lto" CXXFLAGS="${CXXFLAGS:-} -fno-lto"
 	else
 		export SVM=0
 		unset SVM_PLUGIN SVM_UAPI SVM_SYSROOT
@@ -82,7 +85,12 @@ build_profile() {
 	abuild_fetch_retry
 	abuild -r
 	if [ "$profile" = nommu-svm ]; then
-		for package in zlib ncurses pcre libcap; do
+		for package in openssl zlib ncurses pcre libcap; do
+			cd "$HOME/aports-$profile/main/$package"
+			abuild_fetch_retry
+			SVM_ONLY=1 abuild -d -r
+		done
+		for package in apk-tools python3 nginx coreutils iperf3; do
 			cd "$HOME/aports-$profile/main/$package"
 			abuild_fetch_retry
 			SVM_ONLY=1 abuild -d -r
@@ -98,7 +106,7 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-svm ]; then
-		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu; do
+		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu apk-tools-nommu python3-nommu nginx-nommu coreutils-nommu iperf3-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SVM APK for $package; matches: $*" >&2
@@ -106,6 +114,12 @@ build_profile() {
 			}
 			echo "Collecting $profile/$package: $1"
 			cp "$1" "/out/$profile/packages/"
+		done
+		for package_glob in openssl-[0-9]* libcrypto3-[0-9]* libssl3-[0-9]*; do
+			set -- $REPODEST/main/x86_64/$package_glob.apk
+			for apk in "$@"; do
+				[ -f "$apk" ] && cp "$apk" "/out/$profile/packages/"
+			done
 		done
 	fi
 	set -- "$REPODEST/main/x86_64/busybox-static"-*.apk

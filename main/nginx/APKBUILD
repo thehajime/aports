@@ -351,11 +351,11 @@ _http_zstd_so="ngx_http_zstd_filter_module.so ngx_http_zstd_static_module.so"
 _add_module "rtmp" "v1.2.2" "https://github.com/arut/nginx-rtmp-module"
 _rtmp_provides="$pkgname-rtmp"  # for backward compatibility
 
-if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-	# The minimal SWMMU package is built independently from the full Alpine
-	# package, so it only fetches nginx and profile configuration.
+if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+	# The NOMMU variant is built independently from the full Alpine package.
+	if [ "${SVM_ONLY:-0}" = 1 ]; then _nommu_conf=nginx-svm.conf; else _nommu_conf=nginx-swmmu.conf; fi
 	source="https://nginx.org/download/nginx-$pkgver.tar.gz
-	nginx-swmmu.conf"
+	$_nommu_conf"
 	subpackages="$pkgname-nommu::x86_64"
 	makedepends="linux-headers openssl-dev"
 	checkdepends=
@@ -366,7 +366,7 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 fi
 
 prepare() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		default_prepare
 		return
 	fi
@@ -399,7 +399,7 @@ _build() {
 	local _make_cc="${CC:-cc}"
 	local _configure_cc="$_make_cc"
 	local _file_aio=--with-file-aio
-	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ]; then
+	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ] || [ "${SVM_MINIMAL_BUILD:-0}" = 1 ]; then
 		_crossbuild_opts="--crossbuild=Linux:x86_64"
 		_file_aio=
 		# Nginx configure executes its compiler probes. Use the native build
@@ -457,7 +457,7 @@ _build() {
 		$_crossbuild_opts \
 		"$@"
 
-	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ]; then
+	if [ "${SWMMU_MINIMAL_BUILD:-0}" = 1 ] || [ "${SVM_MINIMAL_BUILD:-0}" = 1 ]; then
 		make CC="$CC"
 	else
 		make
@@ -465,6 +465,15 @@ _build() {
 }
 
 build() {
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/svm-profile.sh"
+		svm_guest_profile || return 1
+		local SVM_MINIMAL_BUILD=1 _extra_flags= _njs_mods=
+		_build
+		rm -rf objs-svm
+		mv objs objs-svm
+		return
+	fi
 	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 		. "$startdir/../../scripts/swmmu-profile.sh"
 		swmmu_guest_profile || return 1
@@ -493,7 +502,7 @@ build() {
 }
 
 check() {
-	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+	[ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ] && return 0
 
 	msg "Running nginx tests..."
 	cd "$srcdir"/nginx-tests-*
@@ -509,7 +518,7 @@ check() {
 }
 
 package() {
-	[ "${SWMMU_ONLY:-0}" = 1 ] && return 0
+	[ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ] && return 0
 
 	make DESTDIR="$pkgdir" install
 	chown root:root "$pkgdir"/usr/sbin/nginx
@@ -577,16 +586,21 @@ pre_split() {
 }
 
 nommu() {
-	[ "${SWMMU:-0}" = 1 ] || {
-		error "Set SWMMU=1 to build the nginx NOMMU package"
+	[ "${SWMMU:-0}" = 1 ] || [ "${SVM:-0}" = 1 ] || {
+		error "Set SWMMU=1 or SVM=1 to build the nginx NOMMU package"
 		return 1
 	}
-	pkgdesc="nginx HTTP and TLS server built for SWMMU NOMMU"
+	pkgdesc="nginx HTTP and TLS server built for NOMMU"
 	depends="musl-nommu libssl3"
 	mkdir -p "$subpkgdir/usr/sbin" "$subpkgdir/etc/nginx"
-	install -Dm755 "$builddir"/objs-swmmu/nginx "$subpkgdir"/usr/sbin/nginx
-	install -Dm644 "$srcdir"/nginx-swmmu.conf \
-		"$subpkgdir"/etc/nginx/nginx-swmmu.conf
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		install -Dm755 "$builddir"/objs-svm/nginx "$subpkgdir"/usr/sbin/nginx
+		install -Dm644 "$srcdir"/nginx-svm.conf "$subpkgdir"/etc/nginx/nginx.conf
+	else
+		install -Dm755 "$builddir"/objs-swmmu/nginx "$subpkgdir"/usr/sbin/nginx
+		install -Dm644 "$srcdir"/nginx-swmmu.conf \
+			"$subpkgdir"/etc/nginx/nginx-swmmu.conf
+	fi
 }
 
 prepare_package() {
@@ -746,5 +760,10 @@ if [ "${SWMMU_ONLY:-0}" = 1 ]; then
 	sha512sums="
 	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
 	8e84d4a07d36a1e0e83a5bf4a15098305ae29f007910b7d9cae55084d13acb7d481ce5aff7ea86a2e3311175d79d1c8d9beb00d45c5bcc0fd245cfdd5c37b8ec  nginx-swmmu.conf
+	"
+elif [ "${SVM_ONLY:-0}" = 1 ]; then
+	sha512sums="
+	48c21de65fa188137a4088d02c28e2533a7164040bf19281637e025012e6d03afcacb0ee15463a107685a2a221037f24ce15fc89c46b6f7a36b94443d3993bf1  nginx-$pkgver.tar.gz
+	001e4b198de898ba3005c39140184081a9337a6a43865e85d4f2233296dd94eb62ef83e4c5c9ea05d34b5c1fae0eee6a9f58285496f983eed88cf87d213f9765  nginx-svm.conf
 	"
 fi

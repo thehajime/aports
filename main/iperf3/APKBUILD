@@ -17,6 +17,15 @@ source="$pkgname-$pkgver.tar.gz::https://github.com/esnet/$_pkgname/archive/$pkg
 builddir="$srcdir/$_pkgname-$pkgver"
 
 build() {
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/svm-profile.sh"
+		svm_guest_profile || return 1
+		local _svm_cc="$CC"
+		CC="${REALGCC:-gcc}" ./configure --build=$CBUILD --host=x86_64-linux-musl \
+			--prefix=/usr --sysconfdir=/etc --disable-static || return 1
+		make CC="$_svm_cc"
+		return
+	fi
 	CFLAGS="$CFLAGS -flto=auto" \
 	./configure \
 		--build=$CBUILD \
@@ -41,12 +50,24 @@ check() {
 
 package() {
 	make DESTDIR="$pkgdir" install
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		return 0
+	fi
 
 	install -Dm755 "$srcdir"/$pkgname.initd \
 		"$pkgdir"/etc/init.d/$pkgname
 	install -Dm644 "$srcdir"/$pkgname.confd \
 		"$pkgdir"/etc/conf.d/$pkgname
 }
+
+if [ "${SVM_ONLY:-0}" = 1 ]; then
+	arch="x86_64"
+	pkgname="$pkgname-nommu"
+	subpackages=""
+	makedepends="openssl-dev"
+	depends="musl-nommu libssl3"
+	options="$options !check !tracedeps"
+fi
 
 sha512sums="
 6418c5521ab4e7ab9a18ecf07b3c0b9460d0015314bf6fdea9b3a748b1deb8c47a6ed1e5fd86cc0a99e0f6877e943f44488387f1fc2c3c17e091014fb9ad003c  iperf3-3.21.tar.gz
