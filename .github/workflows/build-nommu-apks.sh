@@ -4,22 +4,26 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 trap 'status=$?; if [ "$status" -ne 0 ]; then echo "build-nommu-apks.sh failed (exit $status)" >&2; fi' EXIT
 
 apk add --no-cache alpine-sdk bash doas git curl ca-certificates bc bison flex openssl-dev perl python3 elfutils-dev gmp-dev mpfr-dev mpc1-dev isl-dev rsync \
-	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo
+	autoconf automake libtool diffutils ncurses ncurses-dev pcre-dev libcap-dev gawk texinfo gcc-plugin-dev
 
-# Build the plugin with the same Alpine GCC that will compile the guest
-# userspace packages. GCC plugins are tied to the host compiler ABI.
+# Build the SVM plugin with the same Alpine GCC used for the guest packages.
+# GCC plugins are tied to the host compiler ABI.
 make -C /kernel ARCH=um O=/tmp/kernel-build x86_64_defconfig
 /kernel/scripts/config --file /tmp/kernel-build/.config \
-	--disable MMU \
-	--enable NOMMU_SWMMU \
+	--disable MMU --disable SMP --disable PREEMPTION \
+	--enable UML_NOMMU_SAS \
+	--enable SVM_PAGETABLE \
+	--enable UML_SVM_TABLE \
 	--enable GCC_PLUGINS \
-	--enable GCC_PLUGIN_SWMMU
+	--enable GCC_PLUGIN_SVM
 make -C /kernel ARCH=um O=/tmp/kernel-build olddefconfig
+grep -q '^CONFIG_GCC_PLUGIN_SVM=y$' /tmp/kernel-build/.config
+grep -q '^CONFIG_UML_SVM_TABLE=y$' /tmp/kernel-build/.config
 make -C /kernel ARCH=um O=/tmp/kernel-build scripts
 make -C /kernel ARCH=um O=/tmp/kernel-build \
 	INSTALL_HDR_PATH=/tmp/kernel-uapi headers_install
-test -r /tmp/kernel-build/scripts/gcc-plugins/swmmu_plugin.so
-test -r /tmp/kernel-uapi/include/linux/nommu_swmmu.h
+test -r /tmp/kernel-build/scripts/gcc-plugins/svm_plugin.so
+test -r /tmp/kernel-uapi/include/linux/svm_prctl.h
 
 addgroup -S abuild 2>/dev/null || true
 adduser -D -G abuild builder
@@ -30,28 +34,15 @@ chmod 0400 /etc/doas.d/abuild.conf
 for profile in nommu-plain nommu-svm; do
 	mkdir -p "/home/builder/aports-$profile/main" "/home/builder/aports-$profile/scripts" "/out/$profile/packages" "/out/$profile/tools" "/out/$profile/toolchain"
 	cp -a /src/main/musl /src/main/busybox "/home/builder/aports-$profile/main/"
-	cp -a /src/scripts/swmmu-profile.sh /src/scripts/swmmu-cc "/home/builder/aports-$profile/scripts/"
-	if [ "$profile" = nommu-svm ]; then
-		mkdir -p "/home/builder/aports-$profile/community"
-		cp -a /src/main/openssl /src/main/zlib /src/main/apk-tools \
-			/src/main/python3 /src/main/nginx /src/main/coreutils \
-			/src/main/ncurses /src/main/pcre /src/main/libcap /src/main/zsh \
-			"/home/builder/aports-$profile/main/"
-		cp -a /src/community/emacs "/home/builder/aports-$profile/community/"
-		cp -a /src/scripts/swmmu-prepare.sh "/home/builder/aports-$profile/scripts/"
-		# GitLab rejects unauthenticated archive downloads from GitHub-hosted
-		# runners with HTTP 418.  The Alpine GitHub mirror carries the same
-		# signed tag and resolves to the same commit; use its archive with an
-		# explicit filename and checksum in this disposable package tree.
-		sh "$script_dir/fix-nommu-package-recipes.sh" "/home/builder/aports-$profile/main"
-	fi
+	cp -a /src/scripts/svm-profile.sh "/home/builder/aports-$profile/scripts/"
 done
 chown -R builder:abuild /home/builder /out /var/cache/distfiles
 
 su -s /bin/sh builder -c '
 set -eu
 export PACKAGER="UML CI <uml-ci@example.invalid>"
-abuild-keygen -a -i -n
+abuild-keygen -a -n
+doas cp "$HOME"/.config/abuild/*.rsa.pub /etc/apk/keys/
 
 abuild_fetch_retry() {
 	attempt=1
@@ -72,16 +63,13 @@ build_profile() {
 	export REPODEST="/out/$profile"
 	${CC:-gcc} -dumpfullversion >"/out/$profile/toolchain/gcc-version"
 	if [ "$profile" = nommu-svm ]; then
-		export SWMMU=1
-		export SWMMU_DIRECT_WINDOW=1
-		export SWMMU_KERNEL_SRC=/kernel
-		export SWMMU_KERNEL_BUILD=/tmp/kernel-build
-		export SWMMU_PLUGIN=/tmp/kernel-build/scripts/gcc-plugins/swmmu_plugin.so
-		export SWMMU_UAPI=/tmp/kernel-uapi/include
-		export SWMMU_SYSROOT="$HOME/swmmu-sysroot"
+		export SVM=1
+		export SVM_PLUGIN=/tmp/kernel-build/scripts/gcc-plugins/svm_plugin.so
+		export SVM_UAPI=/tmp/kernel-uapi/include
+		export SVM_SYSROOT="$HOME/svm-sysroot"
 	else
-		export SWMMU=0
-		unset SWMMU_PLUGIN SWMMU_UAPI SWMMU_SYSROOT SWMMU_WRAPPER_SOURCE
+		export SVM=0
+		unset SVM_PLUGIN SVM_UAPI SVM_SYSROOT
 	fi
 	cd "$HOME/aports-$profile/main/musl"
 	abuild_fetch_retry
@@ -90,35 +78,11 @@ build_profile() {
 	abuild_fetch_retry
 	abuild -r
 	if [ "$profile" = nommu-svm ]; then
-		"$HOME/aports-$profile/scripts/swmmu-prepare.sh" check
-		cd "$HOME/aports-$profile/main/openssl"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/zlib"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/apk-tools"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/coreutils"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/nginx"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		cd "$HOME/aports-$profile/main/python3"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -r
-		# Native build dependencies are preinstalled above. Never install a
-		# target musl-nommu dependency into the build host through abuild.
-		for package in ncurses pcre libcap zsh; do
+		for package in zlib ncurses pcre libcap; do
 			cd "$HOME/aports-$profile/main/$package"
 			abuild_fetch_retry
-			SWMMU_ONLY=1 abuild -d -r
+			SVM_ONLY=1 abuild -d -r
 		done
-		cd "$HOME/aports-$profile/community/emacs"
-		abuild_fetch_retry
-		SWMMU_ONLY=1 abuild -d -r
 	fi
 	for package in busybox-nommu musl-nommu; do
 		set -- "$REPODEST/main/x86_64/$package"-*.apk
@@ -130,9 +94,7 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-svm ]; then
-		for package in libcrypto3 libssl3 openssl-dev zlib-nommu apk-tools-nommu \
-			coreutils-nommu nginx-nommu python3-nommu \
-			ncurses-nommu pcre-nommu libcap-nommu zsh-nommu; do
+		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SVM APK for $package; matches: $*" >&2
@@ -141,12 +103,6 @@ build_profile() {
 			echo "Collecting $profile/$package: $1"
 			cp "$1" "/out/$profile/packages/"
 		done
-		set -- "$REPODEST/community/x86_64/emacs-nommu"-[0-9]*.apk
-		[ "$#" -eq 1 ] && [ -f "$1" ] || {
-			echo "expected one built SVM Emacs APK; matches: $*" >&2
-			exit 1
-		}
-		cp "$1" "/out/$profile/packages/"
 	fi
 	set -- "$REPODEST/main/x86_64/busybox-static"-*.apk
 	[ "$#" -eq 1 ] && [ -f "$1" ] || {
