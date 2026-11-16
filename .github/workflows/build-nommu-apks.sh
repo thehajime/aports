@@ -39,7 +39,7 @@ for profile in nommu-plain nommu-svm; do
 	cp -a /src/scripts/svm-profile.sh "/home/builder/aports-$profile/scripts/"
 	if [ "$profile" = nommu-svm ]; then
 		cp -a /src/main/zlib /src/main/ncurses /src/main/pcre /src/main/libcap \
-			/src/main/openssl /src/main/apk-tools /src/main/python3 /src/main/nginx \
+			/src/main/openssl /src/main/ca-certificates /src/main/apk-tools /src/main/python3 /src/main/nginx \
 			/src/main/coreutils /src/main/iperf3 /src/main/libevent \
 			/src/main/sqlite /src/main/memcached \
 			"/home/builder/aports-$profile/main/"
@@ -93,6 +93,9 @@ build_profile() {
 			SVM_ONLY=1 abuild_fetch_retry
 			SVM_ONLY=1 abuild -d -r
 		done
+		cd "$HOME/aports-$profile/main/ca-certificates"
+		abuild_fetch_retry
+		abuild -d -r
 		for package in apk-tools python3 nginx coreutils iperf3; do
 			cd "$HOME/aports-$profile/main/$package"
 			SVM_ONLY=1 abuild_fetch_retry
@@ -114,7 +117,7 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-svm ]; then
-		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu apk-tools-nommu python3-nommu nginx-nommu coreutils-nommu iperf3-nommu libevent-nommu sqlite-nommu memcached-nommu; do
+		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu ca-certificates-bundle apk-tools-nommu python3-nommu nginx-nommu coreutils-nommu iperf3-nommu libevent-nommu sqlite-nommu memcached-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SVM APK for $package; matches: $*" >&2
