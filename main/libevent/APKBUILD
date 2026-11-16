@@ -29,6 +29,20 @@ prepare() {
 }
 
 build() {
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/svm-profile.sh"
+		svm_guest_profile || return 1
+		local _svm_cc="$CC"
+		CC="${REALGCC:-gcc}" ./configure \
+			--build="$CBUILD" \
+			--host=x86_64-linux-musl \
+			--prefix=/usr \
+			--sysconfdir=/etc \
+			--disable-openssl \
+			--disable-libevent-regress || return 1
+		make CC="$_svm_cc"
+		return
+	fi
 	./configure \
 		--build=$CBUILD \
 		--host=$CHOST \
@@ -44,7 +58,20 @@ check() {
 
 package() {
 	make -j1 DESTDIR=$pkgdir install
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		make -j1 DESTDIR="$SVM_SYSROOT" install
+	fi
 }
+
+if [ "${SVM_ONLY:-0}" = 1 ]; then
+	pkgname="$pkgname-nommu"
+	pkgdesc="$pkgdesc (instrumented SVM guest)"
+	arch="x86_64"
+	subpackages="$pkgname-dev"
+	makedepends="python3"
+	depends="musl-nommu"
+	options="$options !check !tracedeps"
+fi
 
 dev() {
 	replaces="libevent"

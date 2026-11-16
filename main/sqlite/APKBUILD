@@ -36,6 +36,16 @@ source="https://www.sqlite.org/2026/sqlite-autoconf-$_ver.tar.gz
 builddir="$srcdir/$pkgname-autoconf-$_ver"
 options="!check" # no tests included
 
+if [ "${SVM_ONLY:-0}" = 1 ]; then
+	pkgname="$pkgname-nommu"
+	pkgdesc="$pkgdesc (instrumented SVM guest)"
+	arch="x86_64"
+	subpackages=""
+	depends="musl-nommu"
+	makedepends_host=""
+	options="$options !tracedeps"
+fi
+
 # secfixes:
 #   3.34.1-r0:
 #     - CVE-2021-20227
@@ -81,6 +91,27 @@ prepare() {
 }
 
 build() {
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/svm-profile.sh"
+		svm_guest_profile || return 1
+		local _svm_cc="$CC"
+		CFLAGS="$CFLAGS -fno-lto" \
+		CC_FOR_BUILD="$BUILDCC" \
+		CC="${REALGCC:-gcc}" ./configure \
+			--build="$CBUILD" \
+			--host=x86_64-linux-musl \
+			--prefix=/usr \
+			--disable-readline \
+			--enable-threadsafe \
+			--enable-session \
+			--enable-static \
+			--enable-fts3 \
+			--enable-fts4 \
+			--enable-fts5 \
+			--soname=legacy || return 1
+		make CC="$_svm_cc"
+		return
+	fi
 	export CFLAGS="${CFLAGS//-Os/-O2} $_amalgamation"
 
 	CC_FOR_BUILD="$BUILDCC" \
@@ -107,7 +138,7 @@ check() {
 package() {
 	make DESTDIR="$pkgdir" install
 
-	install -Dvm644 "$srcdir"/$pkgname-src-$_ver/LICENSE.md \
+	install -Dvm644 "$srcdir"/sqlite-src-$_ver/LICENSE.md \
 		"$pkgdir"/usr/share/licenses/$pkgname/LICENSE.md
 }
 

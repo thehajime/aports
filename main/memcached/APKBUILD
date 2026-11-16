@@ -17,11 +17,40 @@ source="https://www.memcached.org/files/memcached-$pkgver.tar.gz
 	fix-bsd-headers.patch
 	"
 
+if [ "${SVM_ONLY:-0}" = 1 ]; then
+	pkgname="$pkgname-nommu"
+	pkgdesc="$pkgdesc (instrumented SVM guest)"
+	arch="x86_64"
+	subpackages=""
+	makedepends="libevent-nommu-dev linux-headers bsd-compat-headers"
+	depends="musl-nommu libevent-nommu"
+	options="$options !check !tracedeps"
+fi
+
 # secfixes:
 #   0:
 #     - CVE-2022-26635
 
 build() {
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		. "$startdir/../../scripts/svm-profile.sh"
+		svm_guest_profile || return 1
+		local _svm_cc="$CC"
+		PKG_CONFIG_LIBDIR="$SVM_SYSROOT/usr/lib/pkgconfig" \
+		PKG_CONFIG_SYSROOT_DIR="$SVM_SYSROOT" \
+		LDFLAGS="$LDFLAGS -L$SVM_SYSROOT/usr/lib" \
+		CC="${REALGCC:-gcc}" ./configure \
+			--build="$CBUILD" \
+			--host=x86_64-linux-musl \
+			--prefix=/usr \
+			--disable-sasl \
+			--disable-seccomp || return 1
+		PKG_CONFIG_LIBDIR="$SVM_SYSROOT/usr/lib/pkgconfig" \
+		PKG_CONFIG_SYSROOT_DIR="$SVM_SYSROOT" \
+		LDFLAGS="$LDFLAGS -L$SVM_SYSROOT/usr/lib" \
+		make CC="$_svm_cc"
+		return
+	fi
 	CFLAGS="$CFLAGS -flto=auto -O2" \
 	./configure \
 		--build=$CBUILD \
@@ -39,10 +68,10 @@ check() {
 
 package() {
 	make DESTDIR="$pkgdir" install
-	install -m755 -D "$srcdir/$pkgname.initd" \
-		"$pkgdir/etc/init.d/$pkgname"
-	install -m644 -D "$srcdir/$pkgname.confd" \
-		"$pkgdir/etc/conf.d/$pkgname"
+	install -m755 -D "$srcdir/memcached.initd" \
+		"$pkgdir/etc/init.d/memcached"
+	install -m644 -D "$srcdir/memcached.confd" \
+		"$pkgdir/etc/conf.d/memcached"
 }
 
 sha512sums="
