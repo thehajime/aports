@@ -46,6 +46,7 @@ build() {
 			--build="$CBUILD" \
 			--host=x86_64-linux-musl \
 			--prefix=/usr \
+			--with-libevent="$SVM_SYSROOT/usr" \
 			--disable-sasl \
 			--disable-seccomp || return 1
 		PKG_CONFIG_LIBDIR="$SVM_SYSROOT/usr/lib/pkgconfig" \
