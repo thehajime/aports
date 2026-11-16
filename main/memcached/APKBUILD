@@ -38,6 +38,9 @@ build() {
 	if [ "${SVM_ONLY:-0}" = 1 ]; then
 		. "$startdir/../../scripts/svm-profile.sh"
 		svm_guest_profile || return 1
+		for header in cdefs queue tree; do
+			install -D -m644 "/usr/include/sys/$header.h" "$SVM_SYSROOT/usr/include/sys/$header.h" || return 1
+		done
 		local _svm_cc="$CC"
 		PKG_CONFIG_LIBDIR="$SVM_SYSROOT/usr/lib/pkgconfig" \
 		PKG_CONFIG_SYSROOT_DIR="$SVM_SYSROOT" \
