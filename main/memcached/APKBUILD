@@ -75,6 +75,9 @@ check() {
 
 package() {
 	make DESTDIR="$pkgdir" install
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		gzip -9 "$pkgdir"/usr/share/man/man1/memcached.1
+	fi
 	install -m755 -D "$srcdir/memcached.initd" \
 		"$pkgdir/etc/init.d/memcached"
 	install -m644 -D "$srcdir/memcached.confd" \
