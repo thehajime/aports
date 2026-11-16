@@ -20,6 +20,7 @@ source="https://www.memcached.org/files/memcached-$pkgver.tar.gz
 
 if [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgname="$pkgname-nommu"
+	builddir="$srcdir/memcached-$pkgver"
 	pkgdesc="$pkgdesc (instrumented SVM guest)"
 	arch="x86_64"
 	subpackages=""
