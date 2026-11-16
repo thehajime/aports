@@ -140,6 +140,7 @@ package() {
 	make DESTDIR="$pkgdir" install
 
 	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		rm -rf "$pkgdir"/usr/include "$pkgdir"/usr/lib/pkgconfig
 		gzip -9 "$pkgdir"/usr/share/man/man1/sqlite3.1
 	fi
 
