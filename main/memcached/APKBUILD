@@ -14,6 +14,7 @@ subpackages="$pkgname-dev $pkgname-doc $pkgname-openrc"
 source="https://www.memcached.org/files/memcached-$pkgver.tar.gz
 	$pkgname.confd
 	$pkgname.initd
+	memcached-nommu.pre-install
 	fix-bsd-headers.patch
 	"
 
@@ -25,6 +26,7 @@ if [ "${SVM_ONLY:-0}" = 1 ]; then
 	makedepends="libevent-nommu-dev linux-headers bsd-compat-headers"
 	depends="musl-nommu libevent-nommu"
 	options="$options !check !tracedeps"
+	install="$pkgname.pre-install"
 fi
 
 # secfixes:
@@ -78,5 +80,6 @@ sha512sums="
 83b76b7bf2452c550c8e35ebfcfe5b69994d6c34fe58886d609ce6e9c7bfe8fa62bd3ba165367c0a80402223b008fe708924ced9204ecbee4bf61ee07845445a  memcached-1.6.45.tar.gz
 31bd788433b8021ed332f86d291e7f03222ae234520e52ba673b581d5da2adf5656e8f73e8b985df73258dea9b2a1b8ef36195163fe47a92fda59825deedfed4  memcached.confd
 11566ce544c3feedbbcca7f87cf21c9d7f7e47c8a0ebdbc0e833ac18a858211c5b00d4128457f957401f6f20453f0cbe902570488133a503c79ee01c102a7c18  memcached.initd
+c475ea4edba909d24bf92169ba73c81e17ba38a9625704ab373d2869b0952dfbb6ca3de8ed51b0776e642e7b278cbdb1556c589246fbae9bec9d8af0a89e5208  memcached-nommu.pre-install
 6c2bc5fd6a16dae82d8fde013fc2db5a79805ad8a59ed2be35a7fb5140dcc5571be53181da815d3ab6f469b85dfa8e9f22b867f353306b8fb668b9e1cb79a583  fix-bsd-headers.patch
 "
