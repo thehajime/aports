@@ -138,6 +138,10 @@ check() {
 package() {
 	make DESTDIR="$pkgdir" install
 
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		gzip -9 "$pkgdir"/usr/share/man/man1/sqlite3.1
+	fi
+
 	install -Dvm644 "$srcdir"/sqlite-src-$_ver/LICENSE.md \
 		"$pkgdir"/usr/share/licenses/$pkgname/LICENSE.md
 }
