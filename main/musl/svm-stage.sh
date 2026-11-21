@@ -36,6 +36,8 @@ cat > "$svm_lib/svm-note.S" <<'ASM'
 .section .note.GNU-stack,"",@progbits
 ASM
 ${CC:-gcc} -c "$svm_lib/svm-note.S" -o "$svm_lib/svm-note.o"
+svm_note="$svm_lib/svm-note.o"
+[ "${SVM_PLAIN:-0}" != 1 ] || svm_note=
 # Based on musl's specs; use the staged libc, advertise its ABI and select
 # rcrt1.o plus the static PIE link flags when requested.
 cat > "$svm_lib/svm-gcc.specs" <<SPECS
@@ -54,7 +56,7 @@ cat > "$svm_lib/svm-gcc.specs" <<SPECS
 libgcc.a%s %:if-exists(libgcc_eh.a%s)
 
 *startfile:
-%{!shared:%{static-pie:$svm_lib/rcrt1.o;:$svm_lib/Scrt1.o}} $svm_lib/crti.o crtbeginS.o%s $svm_lib/svm-note.o
+%{!shared:%{static-pie:$svm_lib/rcrt1.o;:$svm_lib/Scrt1.o}} $svm_lib/crti.o crtbeginS.o%s $svm_note
 
 *endfile:
 crtendS.o%s $svm_lib/crtn.o
@@ -77,6 +79,9 @@ cat > "$svm_bin/svm-gcc" <<'WRAPPER'
 set -eu
 : "${SVM_PLUGIN:?Set SVM_PLUGIN to the plugin matching REALGCC}"
 svm_bin=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "${SVM_PLAIN:-0}" = 1 ]; then
+	exec "${REALGCC:-gcc}" -fPIE "$@" -specs "$svm_bin/../lib/svm-gcc.specs"
+fi
 # Memory operations must reach the instrumented libc rather than late RTL
 # expansion into native-address string instructions.
 exec "${REALGCC:-gcc}" -fPIE -fplugin="$SVM_PLUGIN" \

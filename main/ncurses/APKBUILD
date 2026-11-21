@@ -111,7 +111,7 @@ build() {
 			--with-build-cc="$_native_cc" --disable-stripping \
 			--with-terminfo-dirs=/etc/terminfo:/usr/share/terminfo || return 1
 		make CC="$_guest_cc" BUILD_CC="$_native_cc" || return 1
-		make DESTDIR="$_nommu_sysroot" install.libs install.includes || return 1
+		make -j1 DESTDIR="$_nommu_sysroot" install.libs install.includes || return 1
 		local lib
 		for lib in tinfo ncurses curses; do
 			ln -sf libncursesw.so "$_nommu_sysroot/usr/lib/lib$lib.so" || return 1
@@ -142,7 +142,7 @@ build() {
 
 package() {
 	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
-		make DESTDIR="$pkgdir" install.libs install.includes || return 1
+		make -j1 DESTDIR="$pkgdir" install.libs install.includes || return 1
 		local lib
 		for lib in tinfo ncurses curses; do
 			ln -sf libncursesw.so "$pkgdir/usr/lib/lib$lib.so" || return 1

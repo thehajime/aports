@@ -74,9 +74,11 @@ for _i in $_comps; do
 	subpackages="$subpackages ${_i%%:*}-zsh-completion:_completion:noarch"
 done
 
-if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	pkgname="zsh-nommu"
-	pkgdesc="$pkgdesc (SWMMU instrumented)"
+	provides="zsh=$pkgver-r$pkgrel"
+	replaces="zsh"
+	pkgdesc="$pkgdesc (instrumented NOMMU guest)"
 	arch="x86_64"
 	builddir="$srcdir/zsh-$pkgver"
 	subpackages="$pkgname-doc"
@@ -121,10 +123,18 @@ prepare() {
 }
 
 build() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		local native_cc="${CC:-gcc}"
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
+		local guest_sysroot
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			. "$startdir/../../scripts/svm-profile.sh"
+			svm_guest_profile || return 1
+			guest_sysroot=$SVM_SYSROOT
+		else
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			guest_sysroot=$SWMMU_SYSROOT
+		fi
 		local guest_cc="$CC"
 		# Probe with native libraries, then compile every target object/module
 		# against the instrumented sysroot through the shared compiler wrapper.
@@ -134,7 +144,7 @@ build() {
 			--enable-fndir=/usr/share/zsh/functions --enable-zsh-secure-free \
 			--sysconfdir=/etc --with-tcsetpgrp || return 1
 		make CC="$guest_cc" DLLD="$guest_cc" \
-			CPPFLAGS="-I$SWMMU_SYSROOT/usr/include/ncursesw" || return 1
+			CPPFLAGS="-I$guest_sysroot/usr/include/ncursesw" || return 1
 		return 0
 	fi
 	./configure \
@@ -168,11 +178,19 @@ check() {
 }
 
 package() {
-	if [ "${SWMMU_ONLY:-0}" = 1 ]; then
-		. "$startdir/../../scripts/swmmu-profile.sh"
-		swmmu_guest_profile || return 1
+	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
+		local guest_sysroot
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			. "$startdir/../../scripts/svm-profile.sh"
+			svm_guest_profile || return 1
+			guest_sysroot=$SVM_SYSROOT
+		else
+			. "$startdir/../../scripts/swmmu-profile.sh"
+			swmmu_guest_profile || return 1
+			guest_sysroot=$SWMMU_SYSROOT
+		fi
 		make CC="$CC" DLLD="$CC" \
-			CPPFLAGS="-I$SWMMU_SYSROOT/usr/include/ncursesw" \
+			CPPFLAGS="-I$guest_sysroot/usr/include/ncursesw" \
 			DESTDIR="$pkgdir" install || return 1
 	else
 		make DESTDIR="$pkgdir" install
