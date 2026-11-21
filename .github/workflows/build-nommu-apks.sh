@@ -40,8 +40,8 @@ for profile in nommu-plain nommu-svm; do
 	if [ "$profile" = nommu-svm ]; then
 		cp -a /src/main/zlib /src/main/ncurses /src/main/pcre /src/main/libcap \
 			/src/main/openssl /src/main/ca-certificates /src/main/apk-tools /src/main/python3 /src/main/nginx \
-			/src/main/coreutils /src/main/iperf3 /src/main/libevent \
-			/src/main/sqlite /src/main/memcached \
+			/src/main/coreutils /src/main/iperf3 /src/main/libevent /src/main/gmp /src/main/zsh \
+			/src/main/sqlite /src/main/memcached /src/community/emacs \
 			"/home/builder/aports-$profile/main/"
 	fi
 done
@@ -71,11 +71,13 @@ build_profile() {
 	profile=$1
 	export REPODEST="/out/$profile"
 	${CC:-gcc} -dumpfullversion >"/out/$profile/toolchain/gcc-version"
-	if [ "$profile" = nommu-svm ]; then
+	if [ "$profile" = nommu-svm ] || [ "$profile" = nommu-plain ]; then
 		export SVM=1
+		export SVM_PLAIN=0
+		[ "$profile" != nommu-plain ] || export SVM_PLAIN=1
 		export SVM_PLUGIN=/tmp/kernel-build/scripts/gcc-plugins/svm_plugin.so
 		export SVM_UAPI=/tmp/kernel-uapi/include
-		export SVM_SYSROOT="$HOME/svm-sysroot"
+		export SVM_SYSROOT="$HOME/$profile-sysroot"
 		export CFLAGS="${CFLAGS:-} -fno-lto" CXXFLAGS="${CXXFLAGS:-} -fno-lto"
 	else
 		export SVM=0
@@ -96,7 +98,7 @@ build_profile() {
 		cd "$HOME/aports-$profile/main/ca-certificates"
 		abuild_fetch_retry
 		abuild -d -r
-		for package in apk-tools python3 nginx coreutils iperf3; do
+		for package in apk-tools python3 nginx coreutils iperf3 gmp zsh emacs; do
 			cd "$HOME/aports-$profile/main/$package"
 			SVM_ONLY=1 abuild_fetch_retry
 			SVM_ONLY=1 abuild -d -r
@@ -117,7 +119,7 @@ build_profile() {
 		cp "$1" "/out/$profile/packages/"
 	done
 	if [ "$profile" = nommu-svm ]; then
-		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu ca-certificates-bundle apk-tools-nommu python3-nommu nginx-nommu coreutils-nommu iperf3-nommu libevent-nommu sqlite-nommu memcached-nommu; do
+		for package in zlib-nommu ncurses-nommu pcre-nommu libcap-nommu ca-certificates-bundle apk-tools-nommu python3-nommu nginx-nommu coreutils-nommu iperf3-nommu gmp zsh-nommu libevent-nommu sqlite-nommu memcached-nommu; do
 			set -- "$REPODEST/main/x86_64/$package"-[0-9]*.apk
 			[ "$#" -eq 1 ] && [ -f "$1" ] || {
 				echo "expected one built SVM APK for $package; matches: $*" >&2
@@ -125,6 +127,12 @@ build_profile() {
 			}
 			echo "Collecting $profile/$package: $1"
 			cp "$1" "/out/$profile/packages/"
+		done
+		for package_glob in zsh-nommu-doc-[0-9]* emacs-nommu-[0-9]*; do
+			set -- $REPODEST/main/x86_64/$package_glob.apk
+			for apk in "$@"; do
+				[ -f "$apk" ] && cp "$apk" "/out/$profile/packages/"
+			done
 		done
 		for package_glob in openssl-[0-9]* libcrypto3-[0-9]* libssl3-[0-9]*; do
 			set -- $REPODEST/main/x86_64/$package_glob.apk
