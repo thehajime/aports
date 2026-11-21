@@ -1,0 +1,110 @@
+--- a/src/database.c
++++ b/src/database.c
+@@ -1555,5 +1555,6 @@ static int add_repository_component(struct apk_repoparser *rp, apk_blob_t url, c
+ 	apk_blob_t url_base, url_index, url_printable, url_index_printable;
+ 	apk_blob_t pkgname_spec, dot = APK_BLOB_STRLIT(".");
++	apk_blob_t arch;
+ 	char buf[PATH_MAX];
+ 	int tag_id = apk_db_get_tag_id(db, tag);
+ 
+@@ -1562,8 +1563,10 @@ static int add_repository_component(struct apk_repoparser *rp, apk_blob_t url, c
+ 	if (index_file) {
+ 		url_base = apk_blob_trim_end(url, '/');
++		arch.len = db->arches->item[0]->len;
++		arch.ptr = db->arches->item[0]->ptr;
+ 		url_index = apk_blob_fmt(buf, sizeof buf, BLOB_FMT "/" BLOB_FMT "/%s",
+ 			BLOB_PRINTF(url_base),
+-			BLOB_PRINTF(*db->arches->item[0]),
++			BLOB_PRINTF(arch),
+ 			index_file);
+ 		url_base = APK_BLOB_PTR_LEN(url_index.ptr, url_base.len);
+ 		url_printable = url_base;
+@@ -2057,7 +2060,12 @@ int apk_db_open(struct apk_database *db, struct apk_ctx *ac)
+ 		apk_db_add_arch(db, APK_BLOB_STR(APK_DEFAULT_ARCH));
+ 		db->write_arch = 1;
+ 	}
+-	apk_variable_set(&db->repoparser.variables, APK_BLOB_STRLIT("APK_ARCH"), *db->arches->item[0], APK_VARF_READONLY);
++	{
++		apk_blob_t arch;
++		arch.len = db->arches->item[0]->len;
++		arch.ptr = db->arches->item[0]->ptr;
++		apk_variable_set(&db->repoparser.variables, APK_BLOB_STRLIT("APK_ARCH"), arch, APK_VARF_READONLY);
++	}
+ 
+ 	// In usermode, unshare is need for chroot(2). Otherwise, it is needed
+ 	// for new mount namespace to bind mount proc and dev from system root.
+--- a/src/package.c
++++ b/src/package.c
+@@ -277,1 +277,4 @@
+-	return apk_version_match(*p->version, dep->op, *dep->version);
++	apk_blob_t provided = { .len = p->version->len, .ptr = p->version->ptr };
++	apk_blob_t requested = { .len = dep->version->len, .ptr = dep->version->ptr };
++	return apk_version_match(provided, dep->op, requested);
++
+@@ -284,1 +287,4 @@
+-	return apk_version_match(*pkg->version, dep->op, *dep->version);
++	apk_blob_t provided = { .len = pkg->version->len, .ptr = pkg->version->ptr };
++	apk_blob_t requested = { .len = dep->version->len, .ptr = dep->version->ptr };
++	return apk_version_match(provided, dep->op, requested);
++
+--- a/src/io_gunzip.c
++++ b/src/io_gunzip.c
+@@ -40,1 +40,4 @@
+-		r = gis->cb(gis->cbctx, APK_MPART_DATA, gis->cbarg);
++		apk_blob_t data;
++		data.len = gis->cbarg.len;
++		data.ptr = gis->cbarg.ptr;
++		r = gis->cb(gis->cbctx, APK_MPART_DATA, data);
+--- a/src/database.c
++++ b/src/database.c
+@@ -3213,5 +3213,7 @@
+-		script_args[1] = apk_blob_cstr(*newpkg->version);
+-		script_args[2] = apk_blob_cstr(*oldpkg->version);
++		script_args[1] = apk_blob_cstr(APK_BLOB_PTR_LEN(newpkg->version->ptr, newpkg->version->len));
++		script_args[2] = apk_blob_cstr(APK_BLOB_PTR_LEN(oldpkg->version->ptr, oldpkg->version->len));
+ 	} else {
+-		script_args[1] = apk_blob_cstr(*(oldpkg ? oldpkg->version : newpkg->version));
++		apk_blob_t *version = oldpkg ? oldpkg->version : newpkg->version;
++		apk_blob_t value = APK_BLOB_PTR_LEN(version->ptr, version->len);
++		script_args[1] = apk_blob_cstr(value);
+ 	}
+--- a/src/package.c
++++ b/src/package.c
+@@ -106,1 +106,1 @@
+-		apk_blob_push_blob(to, *pkg->version);
++		apk_blob_push_blob(to, APK_BLOB_PTR_LEN(pkg->version->ptr, pkg->version->len));
+@@ -108,1 +108,1 @@
+-		apk_blob_push_blob(to, *pkg->arch);
++		apk_blob_push_blob(to, APK_BLOB_PTR_LEN(pkg->arch->ptr, pkg->arch->len));
+@@ -313,1 +313,1 @@
+-		apk_blob_push_blob(to, *dep->version);
++		apk_blob_push_blob(to, APK_BLOB_PTR_LEN(dep->version->ptr, dep->version->len));
+@@ -840,1 +840,1 @@
+-	apk_blob_push_blob(&bbuf, *info->version);
++	apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->version->ptr, info->version->len));
+@@ -843,1 +843,1 @@
+-		apk_blob_push_blob(&bbuf, *info->arch);
++		apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->arch->ptr, info->arch->len));
+@@ -850,1 +850,1 @@
+-	apk_blob_push_blob(&bbuf, *info->description);
++	apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->description->ptr, info->description->len));
+@@ -852,1 +852,1 @@
+-	apk_blob_push_blob(&bbuf, *info->url);
++	apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->url->ptr, info->url->len));
+@@ -854,1 +854,1 @@
+-	apk_blob_push_blob(&bbuf, *info->license);
++	apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->license->ptr, info->license->len));
+@@ -857,1 +857,1 @@
+-		apk_blob_push_blob(&bbuf, *info->origin);
++		apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->origin->ptr, info->origin->len));
+@@ -861,1 +861,1 @@
+-		apk_blob_push_blob(&bbuf, *info->maintainer);
++		apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->maintainer->ptr, info->maintainer->len));
+@@ -869,1 +869,1 @@
+-		apk_blob_push_blob(&bbuf, *info->commit);
++		apk_blob_push_blob(&bbuf, APK_BLOB_PTR_LEN(info->commit->ptr, info->commit->len));
+--- a/src/database.c
++++ b/src/database.c
+@@ -1215,1 +1215,1 @@
+-		apk_blob_push_blob(&bfn, *pkg->version);
++		apk_blob_push_blob(&bfn, APK_BLOB_PTR_LEN(pkg->version->ptr, pkg->version->len));

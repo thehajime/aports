@@ -25,7 +25,7 @@ prepare() {
 
 build() {
 	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
-		local _nommu_cc _nommu_sysroot
+		local _nommu_cc _nommu_sysroot _native_cc="${CC:-gcc}"
 		if [ "${SVM_ONLY:-0}" = 1 ]; then
 			. "$startdir/../../scripts/svm-profile.sh"
 			svm_guest_profile || return 1
@@ -37,16 +37,18 @@ build() {
 		fi
 		_nommu_cc=$CC
 		CC="$_nommu_cc" \
+		CC_FOR_BUILD="$_native_cc" \
 		CFLAGS="$CFLAGS -fno-lto" \
 		./configure \
 			--build=$CBUILD \
 			--host=x86_64-linux-musl \
 			--with-sysroot="$_nommu_sysroot" \
 			--prefix=/usr \
+			--disable-assembly \
 			--disable-cxx \
 			--disable-shared \
 			--enable-static || return 1
-		make CC="$_nommu_cc"
+		make CC="$_nommu_cc" CC_FOR_BUILD="$_native_cc"
 		return
 	fi
 
@@ -76,6 +78,10 @@ check() {
 package() {
 	if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 		make DESTDIR="$pkgdir" install
+		if [ "${SVM_ONLY:-0}" = 1 ]; then
+			# The guest uses the static library without a pkg-config executable.
+			rm -rf "$pkgdir"/usr/lib/pkgconfig
+		fi
 		return 0
 	fi
 	make DESTDIR="$pkgdir" install
@@ -100,6 +106,10 @@ e85a0dab5195889948a3462189f0e0598d331d3457612e2d3350799dba2e244316d256f8161df521
 if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
 	arch="x86_64"
 	subpackages="$pkgname-nommu-dev:_nommu_dev"
+	if [ "${SVM_ONLY:-0}" = 1 ]; then
+		subpackages=""
+		depends="musl-nommu"
+	fi
 	makedepends="bash m4 texinfo libtool autoconf automake"
 	install=
 fi

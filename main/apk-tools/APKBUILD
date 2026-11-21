@@ -1,7 +1,7 @@
 # Maintainer: Natanael Copa <ncopa@alpinelinux.org>
 pkgname=apk-tools
 pkgver=3.0.8
-pkgrel=1
+pkgrel=2
 pkgdesc="Alpine Package Keeper - package manager for alpine"
 arch="all"
 url="https://gitlab.alpinelinux.org/alpine/apk-tools"
@@ -40,6 +40,7 @@ if [ -z "$BOOTSTRAP" ]; then
 fi
 source="https://gitlab.alpinelinux.org/alpine/apk-tools/-/archive/v$pkgver/apk-tools-v$pkgver.tar.gz
 	repo-hash-sha1.patch
+	svm-avoid-aggregate-arch-load.patch
 	"
 
 if [ "${SWMMU_ONLY:-0}" = 1 ] || [ "${SVM_ONLY:-0}" = 1 ]; then
@@ -206,4 +207,5 @@ pyapk() {
 sha512sums="
 3616435508dead5240f8d9fe74e87e2aa93262f9e466f50af8f60100e166403393b1e491c115395864d4179b219699831ecb61dc60960b5dfb1f10816d75f95f  apk-tools-v3.0.8.tar.gz
 6f6442d73d994964d78f06433a611902cbb066a457f3532544278b1422aa0aa276ccec1f2438ea7e93a8a048d3fdbf72ccd9a79d210f44870fda467bc43cb9fd  repo-hash-sha1.patch
+dd11d547d5cb7213e57d63d293e9934903a2b86b0beb8714b2dff0de3bd445f6f01a0d7848941fd0773a2116414f5799314b446250c87b0fb74608719c28a036  svm-avoid-aggregate-arch-load.patch
 "
